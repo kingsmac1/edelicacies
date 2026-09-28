@@ -111,14 +111,14 @@ export function OwnerLayout() {
         </main>
 
         {/* Mobile bottom tab bar */}
-        <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-ink-100 bg-white pb-[env(safe-area-inset-bottom)] sm:hidden">
+        <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-white/15 bg-brand-500 pb-[env(safe-area-inset-bottom)] sm:hidden">
           {primaryItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
                 `flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
-                  isActive ? 'text-brand-600' : 'text-ink-400'
+                  isActive ? 'text-white' : 'text-white/60'
                 }`
               }
             >
@@ -129,7 +129,7 @@ export function OwnerLayout() {
           <button
             onClick={() => setMoreOpen(true)}
             className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
-              isMoreActive ? 'text-brand-600' : 'text-ink-400'
+              isMoreActive ? 'text-white' : 'text-white/60'
             }`}
           >
             <IconMore className="h-5 w-5" />

@@ -37,7 +37,7 @@ export function OwnerCustomers() {
         <p className="mt-8 text-center text-[14px] text-ink-400">No customers yet.</p>
       ) : (
         <div className="mt-5 overflow-x-auto rounded-2xl bg-white ring-1 ring-ink-100">
-          <table className="w-full text-[14px]">
+          <table className="w-full min-w-[560px] text-[14px]">
             <thead>
               <tr className="border-b border-ink-100 text-left text-[12px] uppercase tracking-wide text-ink-400">
                 <th className="px-4 py-3">Customer</th>

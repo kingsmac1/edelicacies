@@ -40,7 +40,7 @@ export function Preloader() {
         <img
           src={logo}
           alt="Edelicacies"
-          className={`animate-fade-in-up h-14 w-auto transition-all duration-500 ease-out ${
+          className={`animate-fade-in-up h-20 w-auto transition-all duration-500 ease-out ${
             exiting ? 'scale-90 opacity-0' : 'scale-100 opacity-100'
           }`}
         />
