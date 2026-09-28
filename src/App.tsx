@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { PublicLayout } from './components/layout/PublicLayout'
+import { Preloader } from './components/layout/Preloader'
 import { Home } from './pages/Home'
 import { Cart } from './pages/Cart'
 import { NotFound } from './pages/NotFound'
@@ -52,85 +53,88 @@ function OwnerFallback() {
 
 function App() {
   return (
-    <Routes>
-      <Route element={<PublicLayout />}>
-        <Route path="/" element={<Home />} />
-        <Route path="/cart" element={<Cart />} />
-        <Route
-          path="/checkout"
-          element={
-            <Suspense fallback={<OwnerFallback />}>
-              <Checkout />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/order-confirmation"
-          element={
-            <Suspense fallback={<OwnerFallback />}>
-              <OrderConfirmation />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/track"
-          element={
-            <Suspense fallback={<OwnerFallback />}>
-              <Track />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/review"
-          element={
-            <Suspense fallback={<OwnerFallback />}>
-              <Review />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/unsubscribe"
-          element={
-            <Suspense fallback={<OwnerFallback />}>
-              <Unsubscribe />
-            </Suspense>
-          }
-        />
-      </Route>
+    <>
+      <Preloader />
+      <Routes>
+        <Route element={<PublicLayout />}>
+          <Route path="/" element={<Home />} />
+          <Route path="/cart" element={<Cart />} />
+          <Route
+            path="/checkout"
+            element={
+              <Suspense fallback={<OwnerFallback />}>
+                <Checkout />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/order-confirmation"
+            element={
+              <Suspense fallback={<OwnerFallback />}>
+                <OrderConfirmation />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/track"
+            element={
+              <Suspense fallback={<OwnerFallback />}>
+                <Track />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/review"
+            element={
+              <Suspense fallback={<OwnerFallback />}>
+                <Review />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/unsubscribe"
+            element={
+              <Suspense fallback={<OwnerFallback />}>
+                <Unsubscribe />
+              </Suspense>
+            }
+          />
+        </Route>
 
-      <Route
-        path="/dashboard/login"
-        element={
-          <Suspense fallback={<OwnerFallback />}>
-            <OwnerLogin />
-          </Suspense>
-        }
-      />
-      <Route
-        path="/dashboard"
-        element={
-          <Suspense fallback={<OwnerFallback />}>
-            <OwnerLayout />
-          </Suspense>
-        }
-      >
-        <Route index element={<Navigate to="menu-items" replace />} />
-        <Route path="orders" element={<OwnerOrders />} />
-        <Route path="daily-menu" element={<OwnerDailyMenu />} />
-        <Route path="menu-items" element={<OwnerMenuItems />} />
-        <Route path="customers" element={<OwnerCustomers />} />
-        <Route path="records" element={<OwnerRecords />} />
-        <Route path="expenses" element={<OwnerExpenses />} />
-        <Route path="reports" element={<OwnerReports />} />
-        <Route path="discount-codes" element={<OwnerDiscountCodes />} />
-        <Route path="reviews" element={<OwnerReviews />} />
-        <Route path="subscribers" element={<OwnerSubscribers />} />
-        <Route path="email-templates" element={<OwnerEmailTemplates />} />
-        <Route path="settings" element={<OwnerSettings />} />
-      </Route>
+        <Route
+          path="/dashboard/login"
+          element={
+            <Suspense fallback={<OwnerFallback />}>
+              <OwnerLogin />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <Suspense fallback={<OwnerFallback />}>
+              <OwnerLayout />
+            </Suspense>
+          }
+        >
+          <Route index element={<Navigate to="menu-items" replace />} />
+          <Route path="orders" element={<OwnerOrders />} />
+          <Route path="daily-menu" element={<OwnerDailyMenu />} />
+          <Route path="menu-items" element={<OwnerMenuItems />} />
+          <Route path="customers" element={<OwnerCustomers />} />
+          <Route path="records" element={<OwnerRecords />} />
+          <Route path="expenses" element={<OwnerExpenses />} />
+          <Route path="reports" element={<OwnerReports />} />
+          <Route path="discount-codes" element={<OwnerDiscountCodes />} />
+          <Route path="reviews" element={<OwnerReviews />} />
+          <Route path="subscribers" element={<OwnerSubscribers />} />
+          <Route path="email-templates" element={<OwnerEmailTemplates />} />
+          <Route path="settings" element={<OwnerSettings />} />
+        </Route>
 
-      <Route path="*" element={<NotFound />} />
-    </Routes>
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </>
   )
 }
 

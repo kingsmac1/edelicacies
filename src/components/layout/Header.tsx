@@ -22,7 +22,7 @@ export function Header() {
     <header className="sticky top-0 z-40 border-b border-ink-100 bg-cream-50/90 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
         <Link to="/" className="flex items-center gap-2" aria-label="Edelicacies home">
-          <img src={logo} alt="Edelicacies" className="h-8 w-auto" />
+          <img src={logo} alt="Edelicacies" className="h-11 w-auto" />
         </Link>
 
         <div className="relative">

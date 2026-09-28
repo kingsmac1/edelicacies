@@ -1,28 +1,44 @@
-import { useState } from 'react'
+import { useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { isSupabaseConfigured } from '../../lib/supabase'
-import logo from '../../assets/brand/logo-wordmark.png'
+import logo from '../../assets/brand/logo-wordmark-white.png'
+import logoMark from '../../assets/brand/logo-mark-white.png'
+import {
+  IconOrders,
+  IconCalendar,
+  IconBowl,
+  IconUsers,
+  IconFileText,
+  IconWallet,
+  IconBarChart,
+  IconTag,
+  IconStar,
+  IconBell,
+  IconMail,
+  IconSliders,
+  IconMore,
+} from '../../components/dashboard/icons'
 
 interface NavItem {
   to: string
   label: string
-  icon: string
+  icon: ComponentType<SVGProps<SVGSVGElement>>
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/dashboard/orders', label: 'Orders', icon: '🧾' },
-  { to: '/dashboard/daily-menu', label: 'Daily Menu & Slots', icon: '📅' },
-  { to: '/dashboard/menu-items', label: 'Menu Items', icon: '🍲' },
-  { to: '/dashboard/customers', label: 'Customers', icon: '👥' },
-  { to: '/dashboard/records', label: 'Records', icon: '📒' },
-  { to: '/dashboard/expenses', label: 'Expenses', icon: '💸' },
-  { to: '/dashboard/reports', label: 'Reports', icon: '📊' },
-  { to: '/dashboard/discount-codes', label: 'Discount Codes', icon: '🏷️' },
-  { to: '/dashboard/reviews', label: 'Reviews', icon: '⭐' },
-  { to: '/dashboard/subscribers', label: 'Subscribers', icon: '📣' },
-  { to: '/dashboard/email-templates', label: 'Email Templates', icon: '✉️' },
-  { to: '/dashboard/settings', label: 'Settings', icon: '⚙️' },
+  { to: '/dashboard/orders', label: 'Orders', icon: IconOrders },
+  { to: '/dashboard/daily-menu', label: 'Daily Menu & Slots', icon: IconCalendar },
+  { to: '/dashboard/menu-items', label: 'Menu Items', icon: IconBowl },
+  { to: '/dashboard/customers', label: 'Customers', icon: IconUsers },
+  { to: '/dashboard/records', label: 'Records', icon: IconFileText },
+  { to: '/dashboard/expenses', label: 'Expenses', icon: IconWallet },
+  { to: '/dashboard/reports', label: 'Reports', icon: IconBarChart },
+  { to: '/dashboard/discount-codes', label: 'Discount Codes', icon: IconTag },
+  { to: '/dashboard/reviews', label: 'Reviews', icon: IconStar },
+  { to: '/dashboard/subscribers', label: 'Subscribers', icon: IconBell },
+  { to: '/dashboard/email-templates', label: 'Email Templates', icon: IconMail },
+  { to: '/dashboard/settings', label: 'Settings', icon: IconSliders },
 ]
 
 const PRIMARY_MOBILE_PATHS = ['/dashboard/orders', '/dashboard/daily-menu', '/dashboard/menu-items']
@@ -46,9 +62,9 @@ export function OwnerLayout() {
   return (
     <div className="flex min-h-screen bg-ink-50">
       {/* Desktop left sidebar */}
-      <aside className="fixed inset-y-0 left-0 hidden w-60 shrink-0 flex-col border-r border-ink-100 bg-white sm:flex">
-        <div className="flex h-16 items-center border-b border-ink-100 px-5">
-          <img src={logo} alt="Edelicacies" className="h-7 w-auto" />
+      <aside className="fixed inset-y-0 left-0 hidden w-64 shrink-0 flex-col bg-brand-500 sm:flex">
+        <div className="flex h-20 items-center border-b border-white/15 px-5">
+          <img src={logo} alt="Edelicacies" className="h-11 w-auto" />
         </div>
         <nav className="flex-1 overflow-y-auto p-3">
           {NAV_ITEMS.map((item) => (
@@ -56,29 +72,32 @@ export function OwnerLayout() {
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `mb-1 flex min-h-11 items-center gap-3 rounded-xl px-3 text-[14px] font-medium ${
-                  isActive ? 'bg-ink-900 text-white' : 'text-ink-600 hover:bg-ink-50'
+                `mb-1 flex min-h-11 items-center gap-3 rounded-xl px-3 text-[14px] font-medium transition-colors ${
+                  isActive ? 'bg-white text-brand-600' : 'text-white/85 hover:bg-white/10'
                 }`
               }
             >
-              <span aria-hidden="true">{item.icon}</span>
+              <item.icon className="h-5 w-5 shrink-0" />
               {item.label}
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-ink-100 p-3">
+        <div className="border-t border-white/15 p-3">
           <button
             onClick={() => void signOut()}
-            className="flex min-h-11 w-full items-center justify-center rounded-xl bg-ink-50 text-[13px] font-semibold text-ink-500"
+            className="flex min-h-11 w-full items-center justify-center rounded-xl bg-white/15 text-[13px] font-semibold text-white hover:bg-white/25"
           >
             Sign out
           </button>
         </div>
       </aside>
 
-      <div className="flex flex-1 flex-col sm:ml-60">
-        <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-ink-100 bg-white px-4 sm:hidden">
-          <span className="font-display text-lg font-medium text-ink-800">Edelicacies Owner</span>
+      <div className="flex flex-1 flex-col sm:ml-64">
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-ink-100 bg-white px-4 sm:hidden">
+          <div className="flex items-center gap-2">
+            <img src={logoMark} alt="" className="h-8 w-auto rounded-md bg-brand-500 p-1" />
+            <span className="font-display text-lg font-medium text-ink-800">Edelicacies Owner</span>
+          </div>
           <button
             onClick={() => void signOut()}
             className="min-h-9 rounded-full bg-ink-50 px-3.5 text-[13px] font-semibold text-ink-500"
@@ -103,9 +122,7 @@ export function OwnerLayout() {
                 }`
               }
             >
-              <span className="text-lg" aria-hidden="true">
-                {item.icon}
-              </span>
+              <item.icon className="h-5 w-5" />
               {item.label === 'Daily Menu & Slots' ? 'Daily Menu' : item.label}
             </NavLink>
           ))}
@@ -115,9 +132,7 @@ export function OwnerLayout() {
               isMoreActive ? 'text-brand-600' : 'text-ink-400'
             }`}
           >
-            <span className="text-lg" aria-hidden="true">
-              ⋯
-            </span>
+            <IconMore className="h-5 w-5" />
             More
           </button>
         </nav>
@@ -140,9 +155,7 @@ export function OwnerLayout() {
                     location.pathname.startsWith(item.to) ? 'bg-brand-50 text-brand-600' : 'bg-ink-50 text-ink-600'
                   }`}
                 >
-                  <span className="text-2xl" aria-hidden="true">
-                    {item.icon}
-                  </span>
+                  <item.icon className="h-6 w-6" />
                   {item.label}
                 </button>
               ))}
