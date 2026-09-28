@@ -1063,10 +1063,24 @@ insert into email_templates (key, label, subject, body, placeholders) values
   ),
   (
     'stage_change',
-    'Order status changed',
+    'Order status changed (paid, preparing, ready for pickup, cancelled)',
     'Order {{order_number}}: {{status_label}} — Edelicacies',
     'Hi {{customer_name}}, your order {{order_number}} is now: {{status_label}}.',
     '{{customer_name}}, {{order_number}}, {{status_label}}'
+  ),
+  (
+    'out_for_delivery',
+    'Order out for delivery',
+    'Order {{order_number}} is out for delivery — Edelicacies',
+    'Hi {{customer_name}}, your order {{order_number}} is on its way! Please stay close to your phone — our dispatch rider will call you when they''re nearby.',
+    '{{customer_name}}, {{order_number}}'
+  ),
+  (
+    'delivered',
+    'Order delivered',
+    'Order {{order_number}} delivered — thank you! — Edelicacies',
+    'Hi {{customer_name}}, your order {{order_number}} has been delivered. Thank you so much for choosing Edelicacies — we hope you enjoyed every bite!',
+    '{{customer_name}}, {{order_number}}'
   ),
   (
     'auto_cancel',

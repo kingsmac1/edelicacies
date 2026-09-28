@@ -199,12 +199,27 @@ Deno.serve(async (req) => {
         order_number: order.order_number,
         status_label: label,
       }
-      const tmpl = await getTemplate(
-        supabase,
-        'stage_change',
-        'Order {{order_number}}: {{status_label}} — Edelicacies',
-        'Hi {{customer_name}}, your order {{order_number}} is now: {{status_label}}.',
-      )
+
+      // "Out for delivery" and "Delivered" get their own dedicated,
+      // owner-editable templates (with sensible fallback wording below) —
+      // every other status change still uses the generic one.
+      let templateKey = 'stage_change'
+      let fallbackSubject = 'Order {{order_number}}: {{status_label}} — Edelicacies'
+      let fallbackBody = 'Hi {{customer_name}}, your order {{order_number}} is now: {{status_label}}.'
+
+      if (order.status === 'out_for_delivery') {
+        templateKey = 'out_for_delivery'
+        fallbackSubject = 'Order {{order_number}} is out for delivery — Edelicacies'
+        fallbackBody =
+          "Hi {{customer_name}}, your order {{order_number}} is on its way! Please stay close to your phone — our dispatch rider will call you when they're nearby."
+      } else if (order.status === 'delivered') {
+        templateKey = 'delivered'
+        fallbackSubject = 'Order {{order_number}} delivered — thank you! — Edelicacies'
+        fallbackBody =
+          'Hi {{customer_name}}, your order {{order_number}} has been delivered. Thank you so much for choosing Edelicacies — we hope you enjoyed every bite!'
+      }
+
+      const tmpl = await getTemplate(supabase, templateKey, fallbackSubject, fallbackBody)
       await sendEmail(
         order.customer_email,
         render(tmpl.subject, vars),
