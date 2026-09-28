@@ -4,6 +4,12 @@
 // "order status changed" email (to the customer). Called directly by the
 // website right after an order is created or its status is changed.
 //
+// The subject line and message wording for each of these come from the
+// `email_templates` table (editable by the owner under Dashboard → Email
+// Templates) — this function fills in the {{placeholders}} and adds the
+// order details/links automatically. If a template row is somehow missing,
+// it falls back to sensible default wording built into this file.
+//
 // Paste this whole file into the Supabase dashboard's Edge Function editor
 // for a function named "send-order-email".
 
@@ -21,6 +27,13 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message)
+  if (err && typeof err === 'object') return JSON.stringify(err)
+  return String(err)
+}
+
 const STATUS_LABELS: Record<string, string> = {
   awaiting_payment: 'Awaiting payment',
   paid: 'Paid',
@@ -33,6 +46,16 @@ const STATUS_LABELS: Record<string, string> = {
 
 function formatNaira(n: number): string {
   return '₦' + Math.round(n).toLocaleString('en-NG')
+}
+
+function render(text: string, vars: Record<string, string>): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? '')
+}
+
+// deno-lint-ignore no-explicit-any
+async function getTemplate(supabase: any, key: string, fallbackSubject: string, fallbackBody: string) {
+  const { data } = await supabase.from('email_templates').select('subject, body').eq('key', key).maybeSingle()
+  return { subject: data?.subject ?? fallbackSubject, body: data?.body ?? fallbackBody }
 }
 
 function emailShell(bodyHtml: string): string {
@@ -65,6 +88,14 @@ function itemsTable(items: { item_name: string; variation_label: string; unit_pr
     )
     .join('')
   return `<table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0;">${rows}</table>`
+}
+
+function paragraphs(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => `<p>${line}</p>`)
+    .join('')
 }
 
 async function sendEmail(to: string, subject: string, html: string): Promise<void> {
@@ -107,15 +138,25 @@ Deno.serve(async (req) => {
       : `<p>Track your order any time using order number <strong>${order.order_number}</strong> and your phone number.</p>`
 
     if (event === 'new_order') {
+      const customerVars = {
+        customer_name: order.customer_name,
+        order_number: order.order_number,
+        menu_date: order.menu_date,
+        total: formatNaira(order.total),
+      }
+      const customerTmpl = await getTemplate(
+        supabase,
+        'new_order_customer',
+        'Order {{order_number}} received — Edelicacies',
+        "Thanks, {{customer_name}}! We've received your order {{order_number}} for {{menu_date}}. Payment is confirmed on WhatsApp — we'll message you shortly to sort that out.",
+      )
       await sendEmail(
         order.customer_email,
-        `Order ${order.order_number} received — Edelicacies`,
+        render(customerTmpl.subject, customerVars),
         emailShell(`
-          <h2 style="margin-top:0;">Thanks, ${order.customer_name}!</h2>
-          <p>We've received your order <strong>${order.order_number}</strong> for ${order.menu_date}.</p>
+          ${paragraphs(render(customerTmpl.body, customerVars))}
           ${itemsTable(items ?? [])}
           <p style="font-weight:600;">Total: ${formatNaira(order.total)}</p>
-          <p>Payment is confirmed on WhatsApp — we'll message you shortly to sort that out.</p>
           ${trackingLine}
         `),
       )
@@ -127,26 +168,48 @@ Deno.serve(async (req) => {
         .maybeSingle()
       const ownerEmail = ownerEmailSetting?.value?.email
       if (ownerEmail) {
+        const ownerVars = {
+          customer_name: order.customer_name,
+          customer_phone: order.customer_phone,
+          order_number: order.order_number,
+          total: formatNaira(order.total),
+          delivery_type: order.delivery_type === 'dispatch' ? 'Dispatch delivery' : 'Shop pickup',
+        }
+        const ownerTmpl = await getTemplate(
+          supabase,
+          'new_order_owner',
+          'New order {{order_number}} — {{total}}',
+          'New order from {{customer_name}} ({{customer_phone}}).',
+        )
         await sendEmail(
           ownerEmail,
-          `New order ${order.order_number} — ${formatNaira(order.total)}`,
+          render(ownerTmpl.subject, ownerVars),
           emailShell(`
-            <h2 style="margin-top:0;">New order: ${order.order_number}</h2>
-            <p>${order.customer_name} · ${order.customer_phone}</p>
+            ${paragraphs(render(ownerTmpl.body, ownerVars))}
             ${itemsTable(items ?? [])}
             <p style="font-weight:600;">Total: ${formatNaira(order.total)}</p>
-            <p>${order.delivery_type === 'dispatch' ? 'Dispatch delivery' : 'Shop pickup'}</p>
+            <p>${ownerVars.delivery_type}</p>
           `),
         )
       }
     } else if (event === 'stage_change') {
       const label = STATUS_LABELS[order.status] ?? order.status
+      const vars = {
+        customer_name: order.customer_name,
+        order_number: order.order_number,
+        status_label: label,
+      }
+      const tmpl = await getTemplate(
+        supabase,
+        'stage_change',
+        'Order {{order_number}}: {{status_label}} — Edelicacies',
+        'Hi {{customer_name}}, your order {{order_number}} is now: {{status_label}}.',
+      )
       await sendEmail(
         order.customer_email,
-        `Order ${order.order_number}: ${label} — Edelicacies`,
+        render(tmpl.subject, vars),
         emailShell(`
-          <h2 style="margin-top:0;">Your order is now: ${label}</h2>
-          <p>Order <strong>${order.order_number}</strong>, placed for ${order.menu_date}.</p>
+          ${paragraphs(render(tmpl.body, vars))}
           ${trackingLine}
         `),
       )
@@ -155,6 +218,6 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: true }), { headers: CORS_HEADERS })
   } catch (err) {
     console.error(err)
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: CORS_HEADERS })
+    return new Response(JSON.stringify({ error: errorMessage(err) }), { status: 500, headers: CORS_HEADERS })
   }
 })

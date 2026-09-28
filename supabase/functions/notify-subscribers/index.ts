@@ -23,6 +23,31 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message)
+  if (err && typeof err === 'object') return JSON.stringify(err)
+  return String(err)
+}
+
+function render(text: string, vars: Record<string, string>): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? '')
+}
+
+function paragraphs(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => `<p>${line}</p>`)
+    .join('')
+}
+
+// deno-lint-ignore no-explicit-any
+async function getTemplate(supabase: any, key: string, fallbackSubject: string, fallbackBody: string) {
+  const { data } = await supabase.from('email_templates').select('subject, body').eq('key', key).maybeSingle()
+  return { subject: data?.subject ?? fallbackSubject, body: data?.body ?? fallbackBody }
+}
+
 function emailShell(bodyHtml: string, unsubscribeId: string): string {
   return `<!doctype html>
 <html>
@@ -100,14 +125,22 @@ Deno.serve(async (req) => {
     if (subError) throw subError
 
     const orderLink = SITE_URL || 'our website'
+    const vars = { item_names: itemNames.join(' · ') }
+    const tmpl = await getTemplate(
+      supabase,
+      'menu_live_subscribers',
+      "Today's menu is live — Edelicacies",
+      "Today's menu is ready! {{item_names}}",
+    )
+    const subject = render(tmpl.subject, vars)
+    const bodyText = paragraphs(render(tmpl.body, vars))
 
     let sent = 0
     if (RESEND_API_KEY) {
       for (const sub of subscribers ?? []) {
-        const bodyHtml = emailShell(
+        const html = emailShell(
           `
-          <h2 style="margin-top:0;">Today's menu is live!</h2>
-          ${itemNames.length ? `<p>${itemNames.join(' · ')}</p>` : ''}
+          ${bodyText}
           <p><a href="${SITE_URL}" style="color:#ff002c;">Order now at ${orderLink}</a></p>
         `,
           sub.id,
@@ -115,12 +148,7 @@ Deno.serve(async (req) => {
         const res = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: FROM_EMAIL,
-            to: sub.email,
-            subject: "Today's menu is live — Edelicacies",
-            html: bodyHtml,
-          }),
+          body: JSON.stringify({ from: FROM_EMAIL, to: sub.email, subject, html }),
         })
         if (res.ok) sent++
         else console.error('Resend error', res.status, await res.text())
@@ -132,6 +160,6 @@ Deno.serve(async (req) => {
     })
   } catch (err) {
     console.error(err)
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: CORS_HEADERS })
+    return new Response(JSON.stringify({ error: errorMessage(err) }), { status: 500, headers: CORS_HEADERS })
   }
 })

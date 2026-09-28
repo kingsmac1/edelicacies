@@ -243,7 +243,7 @@ export function OwnerDailyMenu() {
         </div>
       )}
 
-      <div className="sticky bottom-4 mt-6 flex items-center justify-between rounded-2xl bg-white p-3 shadow-lg ring-1 ring-ink-100">
+      <div className="sticky bottom-20 mt-6 flex items-center justify-between rounded-2xl bg-white p-3 shadow-lg ring-1 ring-ink-100 sm:bottom-4">
         <span className="pl-2 text-[13px] text-ink-500">{includedCount} variation(s) selected</span>
         <Button onClick={() => void handleSave()} disabled={saving || loading}>
           {saving ? 'Saving…' : 'Save menu for ' + formatDateLong(date)}

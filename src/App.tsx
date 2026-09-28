@@ -42,6 +42,9 @@ const OwnerReviews = lazy(() => import('./pages/dashboard/Reviews').then((m) => 
 const OwnerSubscribers = lazy(() =>
   import('./pages/dashboard/Subscribers').then((m) => ({ default: m.OwnerSubscribers })),
 )
+const OwnerEmailTemplates = lazy(() =>
+  import('./pages/dashboard/EmailTemplates').then((m) => ({ default: m.OwnerEmailTemplates })),
+)
 
 function OwnerFallback() {
   return <div className="flex min-h-screen items-center justify-center text-ink-400">Loading…</div>
@@ -122,6 +125,7 @@ function App() {
         <Route path="discount-codes" element={<OwnerDiscountCodes />} />
         <Route path="reviews" element={<OwnerReviews />} />
         <Route path="subscribers" element={<OwnerSubscribers />} />
+        <Route path="email-templates" element={<OwnerEmailTemplates />} />
         <Route path="settings" element={<OwnerSettings />} />
       </Route>
 

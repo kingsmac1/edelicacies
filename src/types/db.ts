@@ -220,3 +220,12 @@ export interface ExpenseRow {
   note: string | null
   created_at: string
 }
+
+export interface EmailTemplateRow {
+  key: string
+  label: string
+  subject: string
+  body: string
+  placeholders: string
+  updated_at: string
+}

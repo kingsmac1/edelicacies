@@ -270,6 +270,25 @@ statements to paste in when you're ready to remove it.
 The `public/_redirects` file is already in place so refreshing any page on
 the live site works correctly.
 
+### Step 13 — Editable email templates (new)
+
+You can now edit the wording of every automated email yourself, from
+**Dashboard → Email Templates** — no need to ask me for changes to things
+like the new-order message or the review request. The order details table,
+totals and links are always added automatically below your text, so editing
+a template can't break the layout.
+
+Two things to paste in for this to work, since it's new:
+
+1. **Re-run `supabase/schema.sql`** in the SQL Editor again (same as Step 6)
+   — it now includes the `email_templates` table with starting wording
+   already filled in.
+2. **Re-paste the 3 Edge Functions** (`send-order-email`, `process-orders`,
+   `notify-subscribers`) — same files, same names, same Verify JWT settings
+   as Step 7. They were updated both to read your edited templates and to
+   fix a bug where error messages weren't showing properly, which is what
+   we were debugging earlier.
+
 ### Reference: all Edge Function secrets
 
 Set these under **Project Settings → Edge Functions → Secrets** in Supabase:

@@ -1,23 +1,37 @@
-import { NavLink, Navigate, Outlet } from 'react-router-dom'
+import { useState } from 'react'
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { isSupabaseConfigured } from '../../lib/supabase'
+import logo from '../../assets/brand/logo-wordmark.png'
 
-const NAV_ITEMS = [
-  { to: '/dashboard/orders', label: 'Orders' },
-  { to: '/dashboard/daily-menu', label: 'Daily Menu & Slots' },
-  { to: '/dashboard/menu-items', label: 'Menu Items' },
-  { to: '/dashboard/customers', label: 'Customers' },
-  { to: '/dashboard/records', label: 'Records' },
-  { to: '/dashboard/expenses', label: 'Expenses' },
-  { to: '/dashboard/reports', label: 'Reports' },
-  { to: '/dashboard/discount-codes', label: 'Discount Codes' },
-  { to: '/dashboard/reviews', label: 'Reviews' },
-  { to: '/dashboard/subscribers', label: 'Subscribers' },
-  { to: '/dashboard/settings', label: 'Settings' },
+interface NavItem {
+  to: string
+  label: string
+  icon: string
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { to: '/dashboard/orders', label: 'Orders', icon: '🧾' },
+  { to: '/dashboard/daily-menu', label: 'Daily Menu & Slots', icon: '📅' },
+  { to: '/dashboard/menu-items', label: 'Menu Items', icon: '🍲' },
+  { to: '/dashboard/customers', label: 'Customers', icon: '👥' },
+  { to: '/dashboard/records', label: 'Records', icon: '📒' },
+  { to: '/dashboard/expenses', label: 'Expenses', icon: '💸' },
+  { to: '/dashboard/reports', label: 'Reports', icon: '📊' },
+  { to: '/dashboard/discount-codes', label: 'Discount Codes', icon: '🏷️' },
+  { to: '/dashboard/reviews', label: 'Reviews', icon: '⭐' },
+  { to: '/dashboard/subscribers', label: 'Subscribers', icon: '📣' },
+  { to: '/dashboard/email-templates', label: 'Email Templates', icon: '✉️' },
+  { to: '/dashboard/settings', label: 'Settings', icon: '⚙️' },
 ]
+
+const PRIMARY_MOBILE_PATHS = ['/dashboard/orders', '/dashboard/daily-menu', '/dashboard/menu-items']
 
 export function OwnerLayout() {
   const { session, loading, signOut } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [moreOpen, setMoreOpen] = useState(false)
 
   if (!isSupabaseConfigured) return <Navigate to="/dashboard/login" replace />
   if (loading) {
@@ -25,10 +39,45 @@ export function OwnerLayout() {
   }
   if (!session) return <Navigate to="/dashboard/login" replace />
 
+  const primaryItems = NAV_ITEMS.filter((item) => PRIMARY_MOBILE_PATHS.includes(item.to))
+  const moreItems = NAV_ITEMS.filter((item) => !PRIMARY_MOBILE_PATHS.includes(item.to))
+  const isMoreActive = moreItems.some((item) => location.pathname.startsWith(item.to))
+
   return (
-    <div className="min-h-screen bg-ink-50">
-      <header className="sticky top-0 z-40 border-b border-ink-100 bg-white">
-        <div className="flex h-14 items-center justify-between px-4">
+    <div className="flex min-h-screen bg-ink-50">
+      {/* Desktop left sidebar */}
+      <aside className="fixed inset-y-0 left-0 hidden w-60 shrink-0 flex-col border-r border-ink-100 bg-white sm:flex">
+        <div className="flex h-16 items-center border-b border-ink-100 px-5">
+          <img src={logo} alt="Edelicacies" className="h-7 w-auto" />
+        </div>
+        <nav className="flex-1 overflow-y-auto p-3">
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                `mb-1 flex min-h-11 items-center gap-3 rounded-xl px-3 text-[14px] font-medium ${
+                  isActive ? 'bg-ink-900 text-white' : 'text-ink-600 hover:bg-ink-50'
+                }`
+              }
+            >
+              <span aria-hidden="true">{item.icon}</span>
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="border-t border-ink-100 p-3">
+          <button
+            onClick={() => void signOut()}
+            className="flex min-h-11 w-full items-center justify-center rounded-xl bg-ink-50 text-[13px] font-semibold text-ink-500"
+          >
+            Sign out
+          </button>
+        </div>
+      </aside>
+
+      <div className="flex flex-1 flex-col sm:ml-60">
+        <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-ink-100 bg-white px-4 sm:hidden">
           <span className="font-display text-lg font-medium text-ink-800">Edelicacies Owner</span>
           <button
             onClick={() => void signOut()}
@@ -36,27 +85,71 @@ export function OwnerLayout() {
           >
             Sign out
           </button>
-        </div>
-        <nav className="no-scrollbar flex gap-1.5 overflow-x-auto px-4 pb-3">
-          {NAV_ITEMS.map((item) => (
+        </header>
+
+        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 pb-24 sm:pb-6">
+          <Outlet />
+        </main>
+
+        {/* Mobile bottom tab bar */}
+        <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-ink-100 bg-white pb-[env(safe-area-inset-bottom)] sm:hidden">
+          {primaryItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `min-h-9 shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
-                  isActive ? 'bg-ink-900 text-white' : 'bg-ink-50 text-ink-500'
+                `flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
+                  isActive ? 'text-brand-600' : 'text-ink-400'
                 }`
               }
             >
-              {item.label}
+              <span className="text-lg" aria-hidden="true">
+                {item.icon}
+              </span>
+              {item.label === 'Daily Menu & Slots' ? 'Daily Menu' : item.label}
             </NavLink>
           ))}
+          <button
+            onClick={() => setMoreOpen(true)}
+            className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
+              isMoreActive ? 'text-brand-600' : 'text-ink-400'
+            }`}
+          >
+            <span className="text-lg" aria-hidden="true">
+              ⋯
+            </span>
+            More
+          </button>
         </nav>
-      </header>
+      </div>
 
-      <main className="mx-auto max-w-5xl px-4 py-6">
-        <Outlet />
-      </main>
+      {moreOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:hidden">
+          <button aria-label="Close" onClick={() => setMoreOpen(false)} className="absolute inset-0 bg-ink-900/50" />
+          <div className="animate-slide-up relative w-full rounded-t-3xl bg-white p-5 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+            <h2 className="mb-4 text-[15px] font-semibold text-ink-800">More</h2>
+            <div className="grid grid-cols-3 gap-3">
+              {moreItems.map((item) => (
+                <button
+                  key={item.to}
+                  onClick={() => {
+                    setMoreOpen(false)
+                    navigate(item.to)
+                  }}
+                  className={`flex flex-col items-center gap-1.5 rounded-2xl p-3 text-center text-[12px] font-medium ${
+                    location.pathname.startsWith(item.to) ? 'bg-brand-50 text-brand-600' : 'bg-ink-50 text-ink-600'
+                  }`}
+                >
+                  <span className="text-2xl" aria-hidden="true">
+                    {item.icon}
+                  </span>
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

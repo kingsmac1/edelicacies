@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
+import { useEffect, useState } from 'react'
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -43,9 +43,20 @@ function DraggableMarker({ lat, lng, onChange }: Props) {
   )
 }
 
+function FlyToOnLocate({ lat, lng, signal }: { lat: number; lng: number; signal: number }) {
+  const map = useMap()
+  useEffect(() => {
+    if (signal > 0) map.flyTo([lat, lng], 16)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signal])
+  return null
+}
+
 export function LocationPicker({ lat, lng, onChange }: Props) {
   const [locating, setLocating] = useState(false)
   const [geoError, setGeoError] = useState<string | null>(null)
+  const [located, setLocated] = useState(false)
+  const [locateSignal, setLocateSignal] = useState(0)
 
   function useCurrentLocation() {
     if (!navigator.geolocation) {
@@ -54,10 +65,13 @@ export function LocationPicker({ lat, lng, onChange }: Props) {
     }
     setLocating(true)
     setGeoError(null)
+    setLocated(false)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         onChange(pos.coords.latitude, pos.coords.longitude)
         setLocating(false)
+        setLocated(true)
+        setLocateSignal((n) => n + 1)
       },
       () => {
         setGeoError("Couldn't get your location. Drag the pin instead.")
@@ -69,9 +83,16 @@ export function LocationPicker({ lat, lng, onChange }: Props) {
 
   return (
     <div>
-      <Button variant="secondary" size="md" onClick={useCurrentLocation} disabled={locating} type="button">
-        {locating ? 'Locating…' : '📍 Use my current location'}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" size="md" onClick={useCurrentLocation} disabled={locating} type="button">
+          {locating ? 'Locating…' : '📍 Use my current location'}
+        </Button>
+        {located && (
+          <span className="flex items-center gap-1 text-[13px] font-medium text-emerald-600">
+            ✓ Location found
+          </span>
+        )}
+      </div>
       {geoError && <p className="mt-2 text-[13px] text-brand-600">{geoError}</p>}
 
       <div className="mt-3 h-56 w-full overflow-hidden rounded-xl ring-1 ring-ink-100">
@@ -81,6 +102,7 @@ export function LocationPicker({ lat, lng, onChange }: Props) {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           <DraggableMarker lat={lat} lng={lng} onChange={onChange} />
+          <FlyToOnLocate lat={lat} lng={lng} signal={locateSignal} />
         </MapContainer>
       </div>
       <p className="mt-1.5 text-[12px] text-ink-400">Tap the map or drag the pin to your exact location.</p>

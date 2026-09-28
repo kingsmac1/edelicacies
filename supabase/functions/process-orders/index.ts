@@ -21,6 +21,31 @@ const SITE_URL = Deno.env.get('SITE_URL') ?? ''
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message)
+  if (err && typeof err === 'object') return JSON.stringify(err)
+  return String(err)
+}
+
+function render(text: string, vars: Record<string, string>): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? '')
+}
+
+function paragraphs(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => `<p>${line}</p>`)
+    .join('')
+}
+
+// deno-lint-ignore no-explicit-any
+async function getTemplate(supabase: any, key: string, fallbackSubject: string, fallbackBody: string) {
+  const { data } = await supabase.from('email_templates').select('subject, body').eq('key', key).maybeSingle()
+  return { subject: data?.subject ?? fallbackSubject, body: data?.body ?? fallbackBody }
+}
+
 function emailShell(bodyHtml: string): string {
   return `<!doctype html>
 <html>
@@ -74,15 +99,19 @@ Deno.serve(async () => {
         continue
       }
       results.autoCancelled++
+      const vars = { customer_name: order.customer_name, order_number: order.order_number }
+      const tmpl = await getTemplate(
+        supabase,
+        'auto_cancel',
+        'Order {{order_number}} was cancelled — Edelicacies',
+        "Hi {{customer_name}}, order {{order_number}} wasn't confirmed as paid in time, so it's been automatically cancelled and any held items released. Still want it? Feel free to place a new order.",
+      )
       await sendEmail(
         order.customer_email,
-        `Order ${order.order_number} was cancelled — Edelicacies`,
+        render(tmpl.subject, vars),
         emailShell(`
-          <h2 style="margin-top:0;">Your order was cancelled</h2>
-          <p>Hi ${order.customer_name}, order <strong>${order.order_number}</strong> wasn't
-          confirmed as paid in time, so it's been automatically cancelled and any held
-          items released.</p>
-          <p>Still want it? Feel free to place a new order${SITE_URL ? ` at <a href="${SITE_URL}">${SITE_URL}</a>` : ''}.</p>
+          ${paragraphs(render(tmpl.body, vars))}
+          ${SITE_URL ? `<p><a href="${SITE_URL}" style="color:#ff002c;">Order again</a></p>` : ''}
         `),
       )
     }
@@ -107,12 +136,18 @@ Deno.serve(async () => {
       const reviewLink = SITE_URL
         ? `${SITE_URL}/review?order=${order.order_number}&phone=${encodeURIComponent(order.customer_phone)}`
         : null
+      const vars = { customer_name: order.customer_name, order_number: order.order_number }
+      const tmpl = await getTemplate(
+        supabase,
+        'review_request',
+        'How was your order? — Edelicacies',
+        "Hi {{customer_name}}, we'd love to hear what you thought of order {{order_number}}.",
+      )
       await sendEmail(
         order.customer_email,
-        `How was your order? — Edelicacies`,
+        render(tmpl.subject, vars),
         emailShell(`
-          <h2 style="margin-top:0;">How was it, ${order.customer_name}?</h2>
-          <p>We'd love to hear what you thought of order <strong>${order.order_number}</strong>.</p>
+          ${paragraphs(render(tmpl.body, vars))}
           ${
             reviewLink
               ? `<p><a href="${reviewLink}" style="color:#ff002c;">Leave a quick review</a></p>`
@@ -127,6 +162,6 @@ Deno.serve(async () => {
     return new Response(JSON.stringify(results), { headers: { 'Content-Type': 'application/json' } })
   } catch (err) {
     console.error(err)
-    return new Response(JSON.stringify({ error: String(err), ...results }), { status: 500 })
+    return new Response(JSON.stringify({ error: errorMessage(err), ...results }), { status: 500 })
   }
 })
