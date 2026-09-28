@@ -1086,8 +1086,8 @@ insert into email_templates (key, label, subject, body, placeholders) values
     'menu_live_subscribers',
     'Notify subscribers: menu is live',
     'Today''s menu is live — Edelicacies',
-    'Today''s menu is ready! {{item_names}}',
-    '{{item_names}}'
+    'Today''s menu is ready!',
+    '(none — today''s menu items are listed automatically as a list below your text)'
   )
 on conflict (key) do nothing;
 

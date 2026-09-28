@@ -126,9 +126,9 @@ export function OwnerOrders() {
             const expanded = expandedId === order.id
             return (
               <div key={order.id} className="rounded-2xl bg-white p-4 ring-1 ring-ink-100">
-                <button className="flex w-full items-start justify-between text-left" onClick={() => void toggleExpand(order)}>
-                  <div>
-                    <p className="text-[15px] font-semibold text-ink-800">
+                <button className="flex w-full items-start justify-between gap-3 text-left" onClick={() => void toggleExpand(order)}>
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] font-semibold text-ink-800">
                       {order.order_number} · {order.customer_name}
                     </p>
                     <p className="text-[13px] text-ink-400">
@@ -136,7 +136,7 @@ export function OwnerOrders() {
                       {order.delivery_type === 'dispatch' ? 'Dispatch' : 'Pickup'}
                     </p>
                   </div>
-                  <div className="text-right">
+                  <div className="shrink-0 text-right">
                     <p className="text-[15px] font-bold text-brand-600">{formatNaira(order.total)}</p>
                     <span className="text-[12px] font-semibold text-ink-500">{STATUS_LABELS[order.status]}</span>
                   </div>

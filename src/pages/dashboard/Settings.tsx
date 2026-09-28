@@ -141,7 +141,7 @@ export function OwnerSettings() {
         <section className="rounded-2xl bg-white p-4 ring-1 ring-ink-100">
           <span className="text-[14px] font-semibold text-ink-700">Shop coordinates</span>
           <p className="mt-1 text-[12px] text-ink-400">Used to calculate delivery distance and pricing.</p>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <input
               type="number"
               step="0.000001"
@@ -149,7 +149,7 @@ export function OwnerSettings() {
               onChange={(e) =>
                 setSettings((s) => ({ ...s, shop_location: { ...s.shop_location, lat: Number(e.target.value) } }))
               }
-              className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-brand-500 sm:w-auto"
             />
             <input
               type="number"
@@ -158,7 +158,7 @@ export function OwnerSettings() {
               onChange={(e) =>
                 setSettings((s) => ({ ...s, shop_location: { ...s.shop_location, lng: Number(e.target.value) } }))
               }
-              className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-brand-500 sm:w-auto"
             />
           </div>
         </section>
@@ -169,9 +169,9 @@ export function OwnerSettings() {
             Price by distance from the shop. Beyond the last band, add the step price for every extra
             step (km).
           </p>
-          <div className="mt-3 flex flex-col gap-2">
+          <div className="mt-3 flex flex-col gap-3">
             {bands.map((b, idx) => (
-              <div key={b.id} className="flex items-center gap-2">
+              <div key={b.id} className="flex flex-wrap items-center gap-2">
                 <input
                   type="number"
                   value={b.min_km}
@@ -180,7 +180,7 @@ export function OwnerSettings() {
                     setBands((prev) => prev.map((x, i) => (i === idx ? { ...x, min_km: v } : x)))
                   }}
                   onBlur={(e) => void updateDeliveryBand(b.id, { ...b, min_km: Number(e.target.value) })}
-                  className="min-h-10 w-16 rounded-lg border border-ink-100 px-2 text-[13px]"
+                  className="min-h-10 w-14 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
                 />
                 <span className="text-ink-400">–</span>
                 <input
@@ -191,7 +191,7 @@ export function OwnerSettings() {
                     setBands((prev) => prev.map((x, i) => (i === idx ? { ...x, max_km: v } : x)))
                   }}
                   onBlur={(e) => void updateDeliveryBand(b.id, { ...b, max_km: Number(e.target.value) })}
-                  className="min-h-10 w-16 rounded-lg border border-ink-100 px-2 text-[13px]"
+                  className="min-h-10 w-14 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
                 />
                 <span className="text-ink-400">km →</span>
                 <input
@@ -202,7 +202,7 @@ export function OwnerSettings() {
                     setBands((prev) => prev.map((x, i) => (i === idx ? { ...x, price: v } : x)))
                   }}
                   onBlur={(e) => void updateDeliveryBand(b.id, { ...b, price: Number(e.target.value) })}
-                  className="min-h-10 w-24 rounded-lg border border-ink-100 px-2 text-[13px]"
+                  className="min-h-10 w-20 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
                 />
                 <button
                   onClick={() => deleteDeliveryBand(b.id).then(load)}
@@ -217,7 +217,7 @@ export function OwnerSettings() {
             </button>
           </div>
 
-          <div className="mt-4 flex items-center gap-2 border-t border-ink-100 pt-4">
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-4">
             <span className="text-[13px] text-ink-600">Beyond last band: +</span>
             <input
               type="number"
@@ -225,7 +225,7 @@ export function OwnerSettings() {
               onChange={(e) =>
                 setSettings((s) => ({ ...s, delivery_step: { ...s.delivery_step, step_price: Number(e.target.value) } }))
               }
-              className="min-h-10 w-24 rounded-lg border border-ink-100 px-2 text-[13px]"
+              className="min-h-10 w-20 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
             />
             <span className="text-[13px] text-ink-600">every</span>
             <input
@@ -234,18 +234,18 @@ export function OwnerSettings() {
               onChange={(e) =>
                 setSettings((s) => ({ ...s, delivery_step: { ...s.delivery_step, step_km: Number(e.target.value) } }))
               }
-              className="min-h-10 w-16 rounded-lg border border-ink-100 px-2 text-[13px]"
+              className="min-h-10 w-14 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
             />
             <span className="text-[13px] text-ink-600">km</span>
           </div>
 
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-[13px] text-ink-600">Maximum delivery distance:</span>
             <input
               type="number"
               value={settings.max_delivery_km.km}
               onChange={(e) => setSettings((s) => ({ ...s, max_delivery_km: { km: Number(e.target.value) } }))}
-              className="min-h-10 w-20 rounded-lg border border-ink-100 px-2 text-[13px]"
+              className="min-h-10 w-20 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
             />
             <span className="text-[13px] text-ink-600">km</span>
           </div>
@@ -263,7 +263,7 @@ export function OwnerSettings() {
           <p className="mt-3 mb-2 text-[13px] font-medium text-ink-600">Pickup time windows</p>
           <div className="flex flex-col gap-2">
             {windows.map((w, idx) => (
-              <div key={w.id} className="flex items-center gap-2">
+              <div key={w.id} className="flex flex-wrap items-center gap-2">
                 <input
                   value={w.label}
                   onChange={(e) => {
@@ -271,7 +271,7 @@ export function OwnerSettings() {
                     setWindows((prev) => prev.map((x, i) => (i === idx ? { ...x, label: v } : x)))
                   }}
                   onBlur={(e) => void updatePickupWindow(w.id, { label: e.target.value, active: w.active })}
-                  className="min-h-10 flex-1 rounded-lg border border-ink-100 px-2 text-[13px]"
+                  className="min-h-10 w-full min-w-0 flex-1 rounded-lg border border-ink-100 px-2 text-[13px] sm:w-auto"
                 />
                 <label className="flex items-center gap-1 text-[12px] text-ink-500">
                   <input
@@ -298,23 +298,23 @@ export function OwnerSettings() {
 
         <section className="rounded-2xl bg-white p-4 ring-1 ring-ink-100">
           <span className="text-[14px] font-semibold text-ink-700">Orders</span>
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-[13px] text-ink-600">Cancel unpaid orders after</span>
             <input
               type="number"
               value={settings.slot_hold_minutes.minutes}
               onChange={(e) => setSettings((s) => ({ ...s, slot_hold_minutes: { minutes: Number(e.target.value) } }))}
-              className="min-h-10 w-20 rounded-lg border border-ink-100 px-2 text-[13px]"
+              className="min-h-10 w-20 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
             />
             <span className="text-[13px] text-ink-600">minutes</span>
           </div>
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-[13px] text-ink-600">Ask for a review</span>
             <input
               type="number"
               value={settings.review_delay_hours.hours}
               onChange={(e) => setSettings((s) => ({ ...s, review_delay_hours: { hours: Number(e.target.value) } }))}
-              className="min-h-10 w-20 rounded-lg border border-ink-100 px-2 text-[13px]"
+              className="min-h-10 w-20 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
             />
             <span className="text-[13px] text-ink-600">hours after delivery</span>
           </div>

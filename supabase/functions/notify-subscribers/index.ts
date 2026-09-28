@@ -125,15 +125,20 @@ Deno.serve(async (req) => {
     if (subError) throw subError
 
     const orderLink = SITE_URL || 'our website'
-    const vars = { item_names: itemNames.join(' · ') }
     const tmpl = await getTemplate(
       supabase,
       'menu_live_subscribers',
       "Today's menu is live — Edelicacies",
-      "Today's menu is ready! {{item_names}}",
+      "Today's menu is ready!",
     )
-    const subject = render(tmpl.subject, vars)
-    const bodyText = paragraphs(render(tmpl.body, vars))
+    // No placeholders in this template — the item list is always generated
+    // and appended below the owner's text, the same way order details are
+    // appended in the other emails.
+    const subject = render(tmpl.subject, {})
+    const bodyText = paragraphs(render(tmpl.body, {}))
+    const itemListHtml = itemNames.length
+      ? `<ul style="margin:12px 0;padding-left:20px;">${itemNames.map((n) => `<li style="padding:3px 0;">${n}</li>`).join('')}</ul>`
+      : ''
 
     let sent = 0
     if (RESEND_API_KEY) {
@@ -141,6 +146,7 @@ Deno.serve(async (req) => {
         const html = emailShell(
           `
           ${bodyText}
+          ${itemListHtml}
           <p><a href="${SITE_URL}" style="color:#ff002c;">Order now at ${orderLink}</a></p>
         `,
           sub.id,

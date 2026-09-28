@@ -60,7 +60,7 @@ export function OwnerLayout() {
   const isMoreActive = moreItems.some((item) => location.pathname.startsWith(item.to))
 
   return (
-    <div className="flex min-h-screen bg-ink-50">
+    <div className="flex min-h-screen overflow-x-hidden bg-ink-50">
       {/* Desktop left sidebar */}
       <aside className="fixed inset-y-0 left-0 hidden w-64 shrink-0 flex-col bg-brand-500 sm:flex">
         <div className="flex h-20 items-center border-b border-white/15 px-5">
@@ -92,7 +92,7 @@ export function OwnerLayout() {
         </div>
       </aside>
 
-      <div className="flex flex-1 flex-col sm:ml-64">
+      <div className="flex min-w-0 flex-1 flex-col sm:ml-64">
         <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-ink-100 bg-white px-4 sm:hidden">
           <div className="flex items-center gap-2">
             <img src={logoMark} alt="" className="h-8 w-auto rounded-md bg-brand-500 p-1" />
@@ -106,7 +106,7 @@ export function OwnerLayout() {
           </button>
         </header>
 
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 pb-24 sm:pb-6">
+        <main className="mx-auto w-full min-w-0 max-w-5xl flex-1 overflow-x-hidden px-4 py-6 pb-24 sm:pb-6">
           <Outlet />
         </main>
 
