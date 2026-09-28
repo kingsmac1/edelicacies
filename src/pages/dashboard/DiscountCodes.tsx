@@ -98,7 +98,7 @@ export function OwnerDiscountCodes() {
         <div className="mt-5 flex flex-col gap-2">
           {codes.map((c) => (
             <div key={c.id} className="flex items-center gap-3 rounded-xl bg-white p-3 ring-1 ring-ink-100">
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <p className="text-[15px] font-bold text-ink-800">{c.code}</p>
                 <p className="text-[12px] text-ink-400">
                   {c.percent_off ? `${c.percent_off}% off` : `${formatNaira(c.fixed_off ?? 0)} off`}
@@ -136,7 +136,7 @@ export function OwnerDiscountCodes() {
                 placeholder="CODE10"
                 className="min-h-11 rounded-xl border border-ink-100 px-3 text-[14px] uppercase"
               />
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <input
                   type="number"
                   value={form.percentOff ?? ''}
@@ -148,7 +148,7 @@ export function OwnerDiscountCodes() {
                     }))
                   }
                   placeholder="% off"
-                  className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px]"
+                  className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] sm:w-auto"
                 />
                 <input
                   type="number"
@@ -161,30 +161,30 @@ export function OwnerDiscountCodes() {
                     }))
                   }
                   placeholder="₦ off (fixed)"
-                  className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px]"
+                  className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] sm:w-auto"
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <input
                   type="date"
                   value={form.startDate ?? ''}
                   onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value || null }))}
-                  className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px]"
+                  className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] sm:w-auto"
                 />
                 <input
                   type="date"
                   value={form.endDate ?? ''}
                   onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value || null }))}
-                  className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px]"
+                  className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] sm:w-auto"
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <input
                   type="number"
                   value={form.maxUses ?? ''}
                   onChange={(e) => setForm((f) => ({ ...f, maxUses: e.target.value ? Number(e.target.value) : null }))}
                   placeholder="Max uses"
-                  className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px]"
+                  className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] sm:w-auto"
                 />
                 <input
                   type="number"
@@ -193,7 +193,7 @@ export function OwnerDiscountCodes() {
                     setForm((f) => ({ ...f, minOrderAmount: e.target.value ? Number(e.target.value) : null }))
                   }
                   placeholder="Min order ₦"
-                  className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px]"
+                  className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] sm:w-auto"
                 />
               </div>
               <label className="flex items-center gap-2 text-[14px] text-ink-700">

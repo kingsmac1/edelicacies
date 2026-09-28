@@ -243,7 +243,7 @@ export function OwnerRecords() {
         <div className="mt-4 flex flex-col gap-2">
           {records.map((r) => (
             <div key={`${r.source}-${r.id}`} className="flex items-center gap-3 rounded-xl bg-white p-3 ring-1 ring-ink-100">
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-medium text-ink-800">
                   {r.customerName || 'Walk-in'} <span className="text-ink-300">· {r.date}</span>
                 </p>
@@ -312,20 +312,20 @@ export function OwnerRecords() {
                 rows={2}
                 className="rounded-xl border border-ink-100 px-3 py-2 text-[14px]"
               />
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <input
                   type="number"
                   value={form.amount || ''}
                   onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))}
                   placeholder="Amount"
-                  className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px]"
+                  className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] sm:w-auto"
                 />
                 <input
                   type="number"
                   value={form.deliveryFee || ''}
                   onChange={(e) => setForm((f) => ({ ...f, deliveryFee: Number(e.target.value) }))}
                   placeholder="Delivery fee"
-                  className="min-h-11 flex-1 rounded-xl border border-ink-100 px-3 text-[14px]"
+                  className="min-h-11 w-full min-w-0 flex-1 rounded-xl border border-ink-100 px-3 text-[14px] sm:w-auto"
                 />
               </div>
               <input

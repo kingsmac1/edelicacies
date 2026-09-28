@@ -75,9 +75,9 @@ export function OwnerSubscribers() {
         <div className="mt-5 flex flex-col gap-2">
           {subscribers.map((s) => (
             <div key={s.id} className="flex items-center gap-3 rounded-xl bg-white p-3 ring-1 ring-ink-100">
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-medium text-ink-800">{s.name || 'Unnamed'}</p>
-                <p className="text-[12px] text-ink-400">
+                <p className="break-words text-[12px] text-ink-400">
                   {s.email}
                   {s.whatsapp ? ` · ${s.whatsapp}` : ''}
                 </p>

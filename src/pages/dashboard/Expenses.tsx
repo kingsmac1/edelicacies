@@ -86,18 +86,18 @@ export function OwnerExpenses() {
         </Button>
       </div>
 
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         <input
           type="date"
           value={range.start}
           onChange={(e) => setRange((r) => ({ ...r, start: e.target.value }))}
-          className="min-h-9 rounded-lg border border-ink-100 px-2 text-[13px]"
+          className="min-h-9 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
         />
         <input
           type="date"
           value={range.end}
           onChange={(e) => setRange((r) => ({ ...r, end: e.target.value }))}
-          className="min-h-9 rounded-lg border border-ink-100 px-2 text-[13px]"
+          className="min-h-9 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
         />
       </div>
 
@@ -122,7 +122,7 @@ export function OwnerExpenses() {
         <div className="mt-4 flex flex-col gap-2">
           {filtered.map((e) => (
             <div key={e.id} className="flex items-center gap-3 rounded-xl bg-white p-3 ring-1 ring-ink-100">
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-medium text-ink-800">{e.category}</p>
                 <p className="text-[12px] text-ink-400">
                   {e.expense_date}
