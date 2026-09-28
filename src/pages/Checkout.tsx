@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useCart } from '../context/CartContext'
 import { useSettings } from '../hooks/useSettings'
@@ -14,6 +14,15 @@ import { Button } from '../components/ui/Button'
 import type { DeliveryBandRow, PickupWindowRow } from '../types/db'
 
 type DeliveryType = 'dispatch' | 'pickup'
+
+type FieldKey = 'name' | 'phone' | 'address' | 'pickup'
+
+interface FieldErrors {
+  name?: string
+  phone?: string
+  address?: string
+  pickup?: string
+}
 
 export function Checkout() {
   const { lines, subtotal, menuDate, clearCart } = useCart()
@@ -37,6 +46,19 @@ export function Checkout() {
   const [checkingDiscount, setCheckingDiscount] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+
+  const nameRef = useRef<HTMLInputElement>(null)
+  const phoneRef = useRef<HTMLInputElement>(null)
+  const addressRef = useRef<HTMLTextAreaElement>(null)
+  const pickupRef = useRef<HTMLDivElement>(null)
+
+  const fieldRefs: Record<FieldKey, React.RefObject<HTMLElement | null>> = {
+    name: nameRef,
+    phone: phoneRef,
+    address: addressRef,
+    pickup: pickupRef,
+  }
 
   useEffect(() => {
     fetchDeliveryBands().then(setBands).catch(() => setBands([]))
@@ -88,24 +110,43 @@ export function Checkout() {
     }
   }
 
+  function focusAndShake(field: FieldKey) {
+    const el = fieldRefs[field].current
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (typeof (el as HTMLInputElement).focus === 'function') {
+      ;(el as HTMLInputElement).focus({ preventScroll: true })
+    }
+    el.classList.remove('animate-shake')
+    // Force a reflow so the animation class can be re-added and replay,
+    // even if the same field fails validation twice in a row.
+    void el.offsetWidth
+    el.classList.add('animate-shake')
+  }
+
   async function handleSubmit() {
     setError(null)
-    if (!name.trim() || !phone.trim()) {
-      setError('Please enter your name and phone number.')
-      return
-    }
+    const errors: FieldErrors = {}
+
+    if (!name.trim()) errors.name = 'Please enter your name.'
+    if (!phone.trim()) errors.phone = 'Please enter your phone number.'
     if (deliveryType === 'dispatch' && !addressText.trim()) {
-      setError('Please add your address and a landmark for the rider.')
-      return
-    }
-    if (deliveryType === 'dispatch' && quote && !quote.available) {
-      setError("That location is outside our delivery area — please contact us on WhatsApp instead.")
-      return
+      errors.address = 'Please add your address and a landmark for the rider.'
+    } else if (deliveryType === 'dispatch' && quote && !quote.available) {
+      errors.address = 'That location is outside our delivery area — please contact us on WhatsApp instead.'
     }
     if (deliveryType === 'pickup' && !pickupWindowId) {
-      setError('Please choose a pickup time.')
+      errors.pickup = 'Please choose a pickup time.'
+    }
+
+    setFieldErrors(errors)
+
+    const firstInvalid = (['name', 'phone', 'address', 'pickup'] as FieldKey[]).find((k) => errors[k])
+    if (firstInvalid) {
+      focusAndShake(firstInvalid)
       return
     }
+
     if (!menuDate) {
       setError('Your cart is missing a menu date — please start again from the menu.')
       return
@@ -174,26 +215,49 @@ export function Checkout() {
 
       <section className="mt-5 flex flex-col gap-3">
         <h2 className="text-[13px] font-semibold uppercase tracking-wide text-ink-400">Your details</h2>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Full name"
-          className="min-h-12 rounded-xl border border-ink-100 px-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <input
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          placeholder="Phone / WhatsApp number"
-          type="tel"
-          className="min-h-12 rounded-xl border border-ink-100 px-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <input
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email address (optional)"
-          type="email"
-          className="min-h-12 rounded-xl border border-ink-100 px-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
+        <div>
+          <input
+            ref={nameRef}
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value)
+              if (fieldErrors.name) setFieldErrors((f) => ({ ...f, name: undefined }))
+            }}
+            placeholder="Full name"
+            className={`min-h-12 w-full rounded-xl border px-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-brand-500 ${
+              fieldErrors.name ? 'border-brand-500' : 'border-ink-100'
+            }`}
+          />
+          {fieldErrors.name && <p className="mt-1.5 text-[13px] font-medium text-brand-600">{fieldErrors.name}</p>}
+        </div>
+        <div>
+          <input
+            ref={phoneRef}
+            value={phone}
+            onChange={(e) => {
+              setPhone(e.target.value)
+              if (fieldErrors.phone) setFieldErrors((f) => ({ ...f, phone: undefined }))
+            }}
+            placeholder="Phone / WhatsApp number"
+            type="tel"
+            className={`min-h-12 w-full rounded-xl border px-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-brand-500 ${
+              fieldErrors.phone ? 'border-brand-500' : 'border-ink-100'
+            }`}
+          />
+          {fieldErrors.phone && <p className="mt-1.5 text-[13px] font-medium text-brand-600">{fieldErrors.phone}</p>}
+        </div>
+        <div>
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Email address (optional)"
+            type="email"
+            className="min-h-12 w-full rounded-xl border border-ink-100 px-4 text-[15px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <p className="mt-1.5 text-[12px] text-ink-400">
+            Optional — but add it so we can also send you order and delivery updates by email.
+          </p>
+        </div>
       </section>
 
       <section className="mt-6">
@@ -218,13 +282,24 @@ export function Checkout() {
         {deliveryType === 'dispatch' ? (
           <div className="mt-4 flex flex-col gap-3">
             <LocationPicker lat={pin.lat} lng={pin.lng} onChange={(lat, lng) => setPin({ lat, lng })} />
-            <textarea
-              value={addressText}
-              onChange={(e) => setAddressText(e.target.value)}
-              rows={2}
-              placeholder="Full address and a landmark for the rider"
-              className="w-full rounded-xl border border-ink-100 px-4 py-3 text-[15px] focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
+            <div>
+              <textarea
+                ref={addressRef}
+                value={addressText}
+                onChange={(e) => {
+                  setAddressText(e.target.value)
+                  if (fieldErrors.address) setFieldErrors((f) => ({ ...f, address: undefined }))
+                }}
+                rows={2}
+                placeholder="Full address and a landmark for the rider"
+                className={`w-full rounded-xl border px-4 py-3 text-[15px] focus:outline-none focus:ring-2 focus:ring-brand-500 ${
+                  fieldErrors.address ? 'border-brand-500' : 'border-ink-100'
+                }`}
+              />
+              {fieldErrors.address && (
+                <p className="mt-1.5 text-[13px] font-medium text-brand-600">{fieldErrors.address}</p>
+              )}
+            </div>
             {quote && (
               <div className="rounded-xl bg-ink-50 p-3 text-[14px]">
                 {quote.available ? (
@@ -249,12 +324,21 @@ export function Checkout() {
             <p className="rounded-xl bg-ink-50 p-3 text-[14px] text-ink-600">
               {settings.pickup_instructions.text}
             </p>
-            <div className="flex flex-col gap-2">
+            <div ref={pickupRef} className="flex flex-col gap-2">
               {pickupWindows.map((w) => (
                 <button
                   key={w.id}
-                  onClick={() => setPickupWindowId(w.id)}
-                  className={`min-h-11 rounded-xl border px-4 text-left text-[14px] font-medium ${pickupWindowId === w.id ? 'border-brand-500 bg-brand-50' : 'border-ink-100'}`}
+                  onClick={() => {
+                    setPickupWindowId(w.id)
+                    if (fieldErrors.pickup) setFieldErrors((f) => ({ ...f, pickup: undefined }))
+                  }}
+                  className={`min-h-11 rounded-xl border px-4 text-left text-[14px] font-medium ${
+                    pickupWindowId === w.id
+                      ? 'border-brand-500 bg-brand-50'
+                      : fieldErrors.pickup
+                        ? 'border-brand-500'
+                        : 'border-ink-100'
+                  }`}
                 >
                   {w.label}
                 </button>
@@ -263,6 +347,7 @@ export function Checkout() {
                 <p className="text-[13px] text-ink-400">No pickup times published yet — add a note below.</p>
               )}
             </div>
+            {fieldErrors.pickup && <p className="text-[13px] font-medium text-brand-600">{fieldErrors.pickup}</p>}
           </div>
         )}
       </section>
