@@ -1,7 +1,9 @@
 import { formatDateLong } from '../../lib/format'
 import heroDish from '../../assets/menu/native-rice-turkey-snails.jpg'
 
-export function Hero({ date }: { date: string }) {
+export function Hero({ date, mode = 'today' }: { date: string; mode?: 'today' | 'tomorrow' }) {
+  const isTomorrow = mode === 'tomorrow'
+
   return (
     <section className="relative overflow-hidden bg-ink-900">
       <img
@@ -19,13 +21,15 @@ export function Hero({ date }: { date: string }) {
           Good food, made fresh for your taste buds.
         </h1>
         <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-ink-100">
-          Today's menu — order for delivery or pickup. Slots are limited, so grab yours before it's gone.
+          {isTomorrow
+            ? "Tomorrow's menu is up for pre-order — order now and it'll be ready for that day."
+            : "Today's menu — order for delivery or pickup. Slots are limited, so grab yours before it's gone."}
         </p>
         <a
           href="#menu"
           className="mt-7 inline-flex min-h-12 items-center justify-center rounded-full bg-brand-500 px-7 text-[15px] font-semibold text-white shadow-lg shadow-brand-900/30 active:scale-[0.97]"
         >
-          See today's menu
+          {isTomorrow ? "See tomorrow's menu" : 'See today\'s menu'}
         </a>
       </div>
     </section>

@@ -1099,11 +1099,24 @@ insert into email_templates (key, label, subject, body, placeholders) values
   (
     'menu_live_subscribers',
     'Notify subscribers: menu is live',
-    'Today''s menu is live — Edelicacies',
-    'Today''s menu is ready!',
-    '(none — today''s menu items are listed automatically as a list below your text)'
+    '{{date_label}} menu is live — Edelicacies',
+    '{{date_label}} menu is ready!',
+    '{{date_label}} (reads "Today''s", "Tomorrow''s", or a full date depending on which day you''re notifying about) — the menu items are also listed automatically, grouped as Food/Drinks, below your text'
   )
 on conflict (key) do nothing;
+
+-- The subject/body above used to hardcode "Today's" even when notifying
+-- about a future date — this corrects that in-place for anyone who already
+-- had the old version seeded, but only if it's still the exact original
+-- wording (so it never overwrites anything you've since customized here
+-- yourself, e.g. from Dashboard → Email Templates).
+update email_templates set
+  subject = '{{date_label}} menu is live — Edelicacies',
+  body = '{{date_label}} menu is ready!',
+  placeholders = '{{date_label}} (reads "Today''s", "Tomorrow''s", or a full date depending on which day you''re notifying about) — the menu items are also listed automatically, grouped as Food/Drinks, below your text'
+where key = 'menu_live_subscribers'
+  and subject = 'Today''s menu is live — Edelicacies'
+  and body = 'Today''s menu is ready!';
 
 alter table email_templates enable row level security;
 

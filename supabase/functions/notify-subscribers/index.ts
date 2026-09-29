@@ -34,6 +34,25 @@ function render(text: string, vars: Record<string, string>): string {
   return text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? '')
 }
 
+// "Today's", "Tomorrow's", or "Monday, 30 September's" — computed from the
+// actual menu date so the email never just says "today" when the owner is
+// notifying about a different day (e.g. scheduling tomorrow's menu ahead).
+function dateLabel(menuDate: string): string {
+  const lagosDate = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos' }).format(d)
+  const today = lagosDate(new Date())
+  const tomorrow = lagosDate(new Date(Date.now() + 24 * 60 * 60 * 1000))
+  if (menuDate === today) return "Today's"
+  if (menuDate === tomorrow) return "Tomorrow's"
+  const [y, m, d] = menuDate.split('-').map(Number)
+  const formatted = new Intl.DateTimeFormat('en-NG', {
+    timeZone: 'Africa/Lagos',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(Date.UTC(y, m - 1, d, 12)))
+  return `${formatted}'s`
+}
+
 function paragraphs(text: string): string {
   return text
     .split('\n')
@@ -129,14 +148,15 @@ Deno.serve(async (req) => {
     const tmpl = await getTemplate(
       supabase,
       'menu_live_subscribers',
-      "Today's menu is live — Edelicacies",
-      "Today's menu is ready!",
+      "{{date_label}} menu is live — Edelicacies",
+      '{{date_label}} menu is ready!',
     )
-    // No placeholders in this template — the item list is always generated
-    // and appended below the owner's text, the same way order details are
-    // appended in the other emails.
-    const subject = render(tmpl.subject, {})
-    const bodyText = paragraphs(render(tmpl.body, {}))
+    // The only placeholder here is {{date_label}} ("Today's" / "Tomorrow's" /
+    // a full date) — the item list is always generated and appended below
+    // the owner's text, the same way order details are in the other emails.
+    const vars = { date_label: dateLabel(menuDate) }
+    const subject = render(tmpl.subject, vars)
+    const bodyText = paragraphs(render(tmpl.body, vars))
 
     function categorySection(label: string, names: string[]): string {
       if (names.length === 0) return ''

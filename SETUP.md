@@ -304,6 +304,31 @@ to take effect:
   grouped as **Food** and **Drinks**, matching how the site itself shows
   them — instead of a generic "today's menu is ready" line.
 
+### Step 15 — Correct "menu is live" email date, and Tomorrow's Menu on the site
+
+Three fixes, bundled together:
+
+- **Email date fix.** The "menu is live" email used to always say "Today's
+  menu is ready!" even when you were notifying about tomorrow's menu. It now
+  correctly says "Today's", "Tomorrow's", or the actual day (e.g. "Friday,
+  3 October's") depending on which date you're notifying about. This needs
+  **both** `schema.sql` re-pasted (Step 6) **and** `notify-subscribers`
+  re-pasted (Step 13.2) to take effect — the database holds the email
+  wording template, and the function computes the date.
+- **Tomorrow's Menu on the homepage.** Whenever you publish and save a menu
+  for the next day (before today's menu is live, or alongside it), the
+  homepage now automatically shows a **"Tomorrow's Menu — Pre-order"**
+  section below today's menu, with real dishes customers can add to cart and
+  check out for that day. If only tomorrow has a published menu (today
+  doesn't yet), the whole homepage — including the header banner — adapts to
+  say "Tomorrow's menu is up for pre-order" instead of talking about
+  "today's" menu. This is frontend-only — no Supabase re-paste needed, just
+  redeploy/refresh the site (Step 12).
+- **Preloader animation glitch fixed.** The loading screen's logo used to
+  appear to "freeze" for a moment while the red background was already
+  sliding apart. The logo now fully fades out first, then the background
+  slides away — no more overlap. Frontend-only, no Supabase changes.
+
 ### Reference: all Edge Function secrets
 
 Set these under **Project Settings → Edge Functions → Secrets** in Supabase:
