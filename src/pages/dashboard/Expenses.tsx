@@ -10,6 +10,7 @@ import { fetchManualSales, fetchOnlinePaidOrders } from '../../lib/api/records'
 import { fetchSettings } from '../../lib/api/settings'
 import { formatNaira, todayLagos } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
+import { SuccessModal } from '../../components/ui/SuccessModal'
 import type { ExpenseRow } from '../../types/db'
 
 const emptyForm: ExpenseInput = { expenseDate: todayLagos(), category: 'Ingredients', amount: 0, note: '' }
@@ -23,6 +24,7 @@ export function OwnerExpenses() {
   const [editing, setEditing] = useState<ExpenseRow | 'new' | null>(null)
   const [form, setForm] = useState<ExpenseInput>(emptyForm)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -63,6 +65,7 @@ export function OwnerExpenses() {
     if (editing === 'new') await createExpense(form)
     else if (editing) await updateExpense(editing.id, form)
     setEditing(null)
+    setShowSaveSuccess(true)
     await load()
   }
 
@@ -219,6 +222,12 @@ export function OwnerExpenses() {
           </div>
         </div>
       )}
+
+      <SuccessModal
+        open={showSaveSuccess}
+        title="Expense saved!"
+        onClose={() => setShowSaveSuccess(false)}
+      />
     </div>
   )
 }

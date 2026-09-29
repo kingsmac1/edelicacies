@@ -8,9 +8,11 @@ import {
   setDailyMenuPublished,
   upsertSlot,
 } from '../../lib/api/dailyMenu'
+import { notifySubscribers } from '../../lib/edgeFunctions'
 import type { DailyMenuRow, DailyMenuSlotRow } from '../../types/db'
 import { formatDateLong, formatNaira, todayLagos } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
+import { SuccessModal } from '../../components/ui/SuccessModal'
 
 interface RowState {
   included: boolean
@@ -29,6 +31,9 @@ export function OwnerDailyMenu() {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copyFrom, setCopyFrom] = useState('')
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false)
+  const [notifying, setNotifying] = useState(false)
+  const [notifyResult, setNotifyResult] = useState<string | null>(null)
 
   async function load(forDate: string) {
     setLoading(true)
@@ -99,12 +104,26 @@ export function OwnerDailyMenu() {
           }
         }
       }
-      setMessage("Saved — today's menu is up to date.")
+      setNotifyResult(null)
+      setShowSaveSuccess(true)
       await load(date)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save changes.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleNotify() {
+    setNotifying(true)
+    setNotifyResult(null)
+    try {
+      const result = await notifySubscribers(date)
+      setNotifyResult(
+        result ? `Sent to ${result.sent} of ${result.subscriberCount} subscribers.` : 'Could not send right now.',
+      )
+    } finally {
+      setNotifying(false)
     }
   }
 
@@ -249,6 +268,18 @@ export function OwnerDailyMenu() {
           {saving ? 'Saving…' : 'Save menu for ' + formatDateLong(date)}
         </Button>
       </div>
+
+      <SuccessModal
+        open={showSaveSuccess}
+        title="Menu saved!"
+        message={`${formatDateLong(date)}'s menu is up to date${menu?.published ? ' and live on the site' : ' (still in draft)'}.`}
+        onClose={() => setShowSaveSuccess(false)}
+      >
+        <Button fullWidth onClick={() => void handleNotify()} disabled={notifying}>
+          {notifying ? 'Sending…' : 'Notify subscribers about this menu'}
+        </Button>
+        {notifyResult && <p className="text-[13px] text-ink-500">{notifyResult}</p>}
+      </SuccessModal>
     </div>
   )
 }

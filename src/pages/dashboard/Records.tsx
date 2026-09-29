@@ -10,6 +10,7 @@ import {
 } from '../../lib/api/records'
 import { formatNaira, todayLagos } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
+import { SuccessModal } from '../../components/ui/SuccessModal'
 import type { ManualSaleRow, OrderRow } from '../../types/db'
 
 interface UnifiedRecord {
@@ -65,6 +66,7 @@ export function OwnerRecords() {
   const [editing, setEditing] = useState<ManualSaleRow | 'new' | null>(null)
   const [form, setForm] = useState<ManualSaleInput>(emptyForm)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -150,6 +152,7 @@ export function OwnerRecords() {
     if (editing === 'new') await createManualSale(form)
     else if (editing) await updateManualSale(editing.id, form)
     setEditing(null)
+    setShowSaveSuccess(true)
     await load()
   }
 
@@ -378,6 +381,12 @@ export function OwnerRecords() {
           </div>
         </div>
       )}
+
+      <SuccessModal
+        open={showSaveSuccess}
+        title="Record saved!"
+        onClose={() => setShowSaveSuccess(false)}
+      />
     </div>
   )
 }

@@ -8,6 +8,7 @@ import {
 } from '../../lib/api/discountCodes'
 import { formatNaira } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
+import { SuccessModal } from '../../components/ui/SuccessModal'
 import type { DiscountCodeRow } from '../../types/db'
 
 const emptyForm: DiscountCodeInput = {
@@ -28,6 +29,7 @@ export function OwnerDiscountCodes() {
   const [form, setForm] = useState<DiscountCodeInput>(emptyForm)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -64,6 +66,7 @@ export function OwnerDiscountCodes() {
       if (editing === 'new') await createDiscountCode(form)
       else if (editing) await updateDiscountCode(editing.id, form)
       setEditing(null)
+      setShowSaveSuccess(true)
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save this code.')
@@ -235,6 +238,12 @@ export function OwnerDiscountCodes() {
           </div>
         </div>
       )}
+
+      <SuccessModal
+        open={showSaveSuccess}
+        title="Discount code saved!"
+        onClose={() => setShowSaveSuccess(false)}
+      />
     </div>
   )
 }

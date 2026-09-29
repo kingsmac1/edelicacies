@@ -12,6 +12,7 @@ import {
 } from '../../lib/api/deliveryBands'
 import type { SettingsMap, DeliveryBandRow, PickupWindowRow } from '../../types/db'
 import { Button } from '../../components/ui/Button'
+import { SuccessModal } from '../../components/ui/SuccessModal'
 
 export function OwnerSettings() {
   const [settings, setSettings] = useState<SettingsMap>(DEFAULT_SETTINGS)
@@ -19,7 +20,7 @@ export function OwnerSettings() {
   const [windows, setWindows] = useState<PickupWindowRow[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function load() {
@@ -43,7 +44,6 @@ export function OwnerSettings() {
   async function handleSave() {
     setSaving(true)
     setError(null)
-    setMessage(null)
     try {
       await Promise.all([
         updateSetting('announcement_banner', settings.announcement_banner),
@@ -57,7 +57,7 @@ export function OwnerSettings() {
         updateSetting('owner_email', settings.owner_email),
         updateSetting('expense_categories', settings.expense_categories),
       ])
-      setMessage('Settings saved.')
+      setShowSaveSuccess(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save settings.')
     } finally {
@@ -337,7 +337,6 @@ export function OwnerSettings() {
       </div>
 
       {error && <p className="mt-4 text-[14px] font-medium text-brand-600">{error}</p>}
-      {message && <p className="mt-4 text-[14px] font-medium text-emerald-600">{message}</p>}
 
       <Button className="mt-5" onClick={() => void handleSave()} disabled={saving}>
         {saving ? 'Saving…' : 'Save settings'}
@@ -345,6 +344,12 @@ export function OwnerSettings() {
       <p className="mt-2 text-[12px] text-ink-400">
         Delivery bands and pickup windows save instantly when you edit them above.
       </p>
+
+      <SuccessModal
+        open={showSaveSuccess}
+        title="Settings saved!"
+        onClose={() => setShowSaveSuccess(false)}
+      />
     </div>
   )
 }

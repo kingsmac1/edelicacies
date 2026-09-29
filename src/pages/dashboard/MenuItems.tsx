@@ -7,6 +7,7 @@ import {
 } from '../../lib/api/menuItems'
 import { formatNaira } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
+import { SuccessModal } from '../../components/ui/SuccessModal'
 import { MenuItemFormModal } from '../../components/dashboard/MenuItemFormModal'
 
 export function OwnerMenuItems() {
@@ -15,6 +16,7 @@ export function OwnerMenuItems() {
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<MenuItemWithVariations | null | 'new'>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -128,10 +130,18 @@ export function OwnerMenuItems() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
+            setShowSaveSuccess(true)
             void load()
           }}
         />
       )}
+
+      <SuccessModal
+        open={showSaveSuccess}
+        title="Item saved!"
+        message="Your menu item has been saved."
+        onClose={() => setShowSaveSuccess(false)}
+      />
 
       {deletingId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

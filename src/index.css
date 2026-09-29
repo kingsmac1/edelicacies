@@ -95,3 +95,30 @@ button, a[role="button"], input, select, textarea {
 .animate-shake {
   animation: shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
+
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-pop-in {
+  animation: pop-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes circle-in {
+  from { stroke-dashoffset: 166; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes check-in {
+  from { stroke-dashoffset: 48; }
+  to { stroke-dashoffset: 0; }
+}
+.animate-check-circle {
+  stroke-dasharray: 166;
+  stroke-dashoffset: 166;
+  animation: circle-in 0.5s cubic-bezier(0.65, 0, 0.45, 1) 0.1s forwards;
+}
+.animate-check-mark {
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: check-in 0.35s ease-out 0.55s forwards;
+}

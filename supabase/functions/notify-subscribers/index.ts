@@ -100,22 +100,23 @@ Deno.serve(async (req) => {
       .eq('menu_date', menuDate)
       .maybeSingle()
 
-    let itemNames: string[] = []
+    type MenuItemRef = { name: string; category: 'food' | 'drink' }
+    let foodNames: string[] = []
+    let drinkNames: string[] = []
     if (dailyMenu) {
       const { data: slots } = await supabase
         .from('daily_menu_slots')
-        .select('menu_items(name)')
+        .select('menu_items(name, category)')
         .eq('daily_menu_id', dailyMenu.id)
-      itemNames = [
-        ...new Set(
-          (slots ?? [])
-            .map((s: { menu_items: { name: string } | { name: string }[] | null }) => {
-              const rel = Array.isArray(s.menu_items) ? s.menu_items[0] : s.menu_items
-              return rel?.name
-            })
-            .filter((n): n is string => Boolean(n)),
-        ),
-      ]
+
+      const items: MenuItemRef[] = (slots ?? [])
+        .map((s: { menu_items: MenuItemRef | MenuItemRef[] | null }) =>
+          Array.isArray(s.menu_items) ? s.menu_items[0] : s.menu_items,
+        )
+        .filter((i: MenuItemRef | null | undefined): i is MenuItemRef => Boolean(i?.name))
+
+      foodNames = [...new Set(items.filter((i: MenuItemRef) => i.category === 'food').map((i: MenuItemRef) => i.name))]
+      drinkNames = [...new Set(items.filter((i: MenuItemRef) => i.category === 'drink').map((i: MenuItemRef) => i.name))]
     }
 
     const { data: subscribers, error: subError } = await supabase
@@ -136,9 +137,16 @@ Deno.serve(async (req) => {
     // appended in the other emails.
     const subject = render(tmpl.subject, {})
     const bodyText = paragraphs(render(tmpl.body, {}))
-    const itemListHtml = itemNames.length
-      ? `<ul style="margin:12px 0;padding-left:20px;">${itemNames.map((n) => `<li style="padding:3px 0;">${n}</li>`).join('')}</ul>`
-      : ''
+
+    function categorySection(label: string, names: string[]): string {
+      if (names.length === 0) return ''
+      const items = names.map((n) => `<li style="padding:3px 0;">${n}</li>`).join('')
+      return `
+        <p style="margin:16px 0 4px;font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:0.04em;color:#6b6b75;">${label}</p>
+        <ul style="margin:0;padding-left:20px;">${items}</ul>
+      `
+    }
+    const itemListHtml = categorySection('Food', foodNames) + categorySection('Drinks', drinkNames)
 
     let sent = 0
     if (RESEND_API_KEY) {

@@ -289,6 +289,21 @@ Two things to paste in for this to work, since it's new:
    fix a bug where error messages weren't showing properly, which is what
    we were debugging earlier.
 
+### Step 14 — Notify subscribers: now right after saving, and with the menu listed
+
+Two small updates, both just need `notify-subscribers` re-pasted (Step 13.2)
+to take effect:
+
+- After saving a **Daily Menu & Slots** page for any date, a popup now
+  offers a **"Notify subscribers about this menu"** button right there — no
+  need to go find the Subscribers page separately. This also means you can
+  notify people a day ahead: schedule tomorrow's menu today, save, and hit
+  notify from that same popup. On the day itself, just open that date again
+  and save (even without changing anything) to get the same prompt.
+- The "menu is live" email itself now lists the actual dishes and drinks —
+  grouped as **Food** and **Drinks**, matching how the site itself shows
+  them — instead of a generic "today's menu is ready" line.
+
 ### Reference: all Edge Function secrets
 
 Set these under **Project Settings → Edge Functions → Secrets** in Supabase:
