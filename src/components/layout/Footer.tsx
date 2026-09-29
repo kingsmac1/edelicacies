@@ -27,6 +27,17 @@ export function Footer() {
         <p className="mt-8 text-xs text-ink-400">
           &copy; {currentYear} Edelicacies. Serving Uyo only, for now.
         </p>
+        <p className="mt-2 text-xs text-ink-400">
+          Powered by{' '}
+          <a
+            href="https://emkaydigitals.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-white"
+          >
+            Emkay Digitals
+          </a>
+        </p>
       </div>
     </footer>
   )
