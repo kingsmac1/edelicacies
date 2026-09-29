@@ -101,24 +101,3 @@ export async function listMenuDates(): Promise<string[]> {
   if (error) throw error
   return (data ?? []).map((d) => d.menu_date as string)
 }
-
-export async function copyDayToDate(sourceDate: string, targetDate: string): Promise<number> {
-  const source = await getDailyMenuByDate(sourceDate)
-  if (!source.menu || source.slots.length === 0) return 0
-
-  const target = await ensureDailyMenu(targetDate)
-
-  const { error } = await supabase.from('daily_menu_slots').upsert(
-    source.slots.map((s) => ({
-      daily_menu_id: target.id,
-      menu_item_id: s.menu_item_id,
-      variation_id: s.variation_id,
-      slots_total: s.slots_total,
-      slots_left: s.slots_total,
-      show_slots: s.show_slots,
-    })),
-    { onConflict: 'daily_menu_id,variation_id' },
-  )
-  if (error) throw error
-  return source.slots.length
-}

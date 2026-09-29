@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchAllMenuItems, type MenuItemWithVariations } from '../../lib/api/menuItems'
 import {
-  copyDayToDate,
   ensureDailyMenu,
   getDailyMenuByDate,
   removeSlot,
@@ -30,7 +29,6 @@ export function OwnerDailyMenu() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [copyFrom, setCopyFrom] = useState('')
   const [showSaveSuccess, setShowSaveSuccess] = useState(false)
   const [notifying, setNotifying] = useState(false)
   const [notifyResult, setNotifyResult] = useState<string | null>(null)
@@ -134,21 +132,6 @@ export function OwnerDailyMenu() {
     setMenu({ ...dailyMenu, published: next })
   }
 
-  async function handleCopy() {
-    if (!copyFrom) return
-    setSaving(true)
-    setError(null)
-    try {
-      const count = await copyDayToDate(copyFrom, date)
-      setMessage(count > 0 ? `Copied ${count} item(s) from ${formatDateLong(copyFrom)}.` : 'That date has no menu to copy.')
-      await load(date)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not copy that menu.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const includedCount = Object.values(rows).filter((r) => r.included).length
 
   return (
@@ -172,19 +155,6 @@ export function OwnerDailyMenu() {
             {menu.published ? 'Published (visible on site)' : 'Draft (hidden)'}
           </button>
         )}
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-white p-3 ring-1 ring-ink-100">
-        <span className="text-[13px] font-medium text-ink-500">Copy from</span>
-        <input
-          type="date"
-          value={copyFrom}
-          onChange={(e) => setCopyFrom(e.target.value)}
-          className="min-h-10 rounded-lg border border-ink-100 px-2 text-[13px]"
-        />
-        <Button size="md" variant="secondary" onClick={() => void handleCopy()} disabled={!copyFrom || saving}>
-          Copy to {formatDateLong(date)}
-        </Button>
       </div>
 
       {error && <p className="mt-3 text-[14px] font-medium text-brand-600">{error}</p>}
