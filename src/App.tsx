@@ -31,11 +31,9 @@ const OwnerOrders = lazy(() => import('./pages/dashboard/Orders').then((m) => ({
 const OwnerCustomers = lazy(() =>
   import('./pages/dashboard/Customers').then((m) => ({ default: m.OwnerCustomers })),
 )
-const OwnerRecords = lazy(() => import('./pages/dashboard/Records').then((m) => ({ default: m.OwnerRecords })))
-const OwnerExpenses = lazy(() =>
-  import('./pages/dashboard/Expenses').then((m) => ({ default: m.OwnerExpenses })),
+const OwnerFinances = lazy(() =>
+  import('./pages/dashboard/Finances').then((m) => ({ default: m.OwnerFinances })),
 )
-const OwnerReports = lazy(() => import('./pages/dashboard/Reports').then((m) => ({ default: m.OwnerReports })))
 const OwnerDiscountCodes = lazy(() =>
   import('./pages/dashboard/DiscountCodes').then((m) => ({ default: m.OwnerDiscountCodes })),
 )
@@ -122,9 +120,10 @@ function App() {
           <Route path="daily-menu" element={<OwnerDailyMenu />} />
           <Route path="menu-items" element={<OwnerMenuItems />} />
           <Route path="customers" element={<OwnerCustomers />} />
-          <Route path="records" element={<OwnerRecords />} />
-          <Route path="expenses" element={<OwnerExpenses />} />
-          <Route path="reports" element={<OwnerReports />} />
+          <Route path="finances" element={<OwnerFinances />} />
+          <Route path="records" element={<Navigate to="/dashboard/finances?tab=sales" replace />} />
+          <Route path="expenses" element={<Navigate to="/dashboard/finances?tab=expenses" replace />} />
+          <Route path="reports" element={<Navigate to="/dashboard/finances" replace />} />
           <Route path="discount-codes" element={<OwnerDiscountCodes />} />
           <Route path="reviews" element={<OwnerReviews />} />
           <Route path="subscribers" element={<OwnerSubscribers />} />

@@ -7,11 +7,13 @@ import {
   setManualSalePaid,
   updateManualSale,
   type ManualSaleInput,
-} from '../../lib/api/records'
-import { formatNaira, todayLagos } from '../../lib/format'
-import { Button } from '../../components/ui/Button'
-import { SuccessModal } from '../../components/ui/SuccessModal'
-import type { ManualSaleRow, OrderRow } from '../../types/db'
+} from '../../../lib/api/records'
+import { defaultRangeValue, resolveRange, type RangeValue } from '../../../lib/dateRange'
+import { RangeFilter } from '../../../components/dashboard/RangeFilter'
+import { formatNaira, todayLagos } from '../../../lib/format'
+import { Button } from '../../../components/ui/Button'
+import { SuccessModal } from '../../../components/ui/SuccessModal'
+import type { ManualSaleRow, OrderRow } from '../../../types/db'
 
 interface UnifiedRecord {
   id: string
@@ -27,22 +29,6 @@ interface UnifiedRecord {
   raw: ManualSaleRow | OrderRow
 }
 
-function startOfRange(preset: string): { start: string; end: string } {
-  const today = todayLagos()
-  if (preset === 'today') return { start: today, end: today }
-  const d = new Date(today)
-  if (preset === 'week') {
-    const start = new Date(d)
-    start.setDate(d.getDate() - 6)
-    return { start: start.toISOString().slice(0, 10), end: today }
-  }
-  if (preset === 'month') {
-    const start = new Date(d.getFullYear(), d.getMonth(), 1)
-    return { start: start.toISOString().slice(0, 10), end: today }
-  }
-  return { start: '2020-01-01', end: today }
-}
-
 const emptyForm: ManualSaleInput = {
   saleDate: todayLagos(),
   customerName: '',
@@ -55,12 +41,11 @@ const emptyForm: ManualSaleInput = {
   paid: true,
 }
 
-export function OwnerRecords() {
+export function SalesTab() {
   const [manual, setManual] = useState<ManualSaleRow[]>([])
   const [online, setOnline] = useState<OrderRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [preset, setPreset] = useState('month')
-  const [customRange, setCustomRange] = useState<{ start: string; end: string } | null>(null)
+  const [range, setRange] = useState<RangeValue>(defaultRangeValue)
   const [sourceFilter, setSourceFilter] = useState<'all' | 'online' | 'manual'>('all')
   const [paidFilter, setPaidFilter] = useState<'all' | 'paid' | 'unpaid'>('all')
   const [editing, setEditing] = useState<ManualSaleRow | 'new' | null>(null)
@@ -83,7 +68,7 @@ export function OwnerRecords() {
     void load()
   }, [])
 
-  const range = customRange ?? startOfRange(preset)
+  const resolved = resolveRange(range)
 
   const records: UnifiedRecord[] = useMemo(() => {
     const fromManual: UnifiedRecord[] = manual.map((m) => ({
@@ -113,11 +98,11 @@ export function OwnerRecords() {
       raw: o,
     }))
     return [...fromManual, ...fromOnline]
-      .filter((r) => r.date >= range.start && r.date <= range.end)
+      .filter((r) => r.date >= resolved.start && r.date <= resolved.end)
       .filter((r) => sourceFilter === 'all' || r.source === sourceFilter)
       .filter((r) => paidFilter === 'all' || (paidFilter === 'paid') === r.paid)
       .sort((a, b) => b.date.localeCompare(a.date))
-  }, [manual, online, range.start, range.end, sourceFilter, paidFilter])
+  }, [manual, online, resolved.start, resolved.end, sourceFilter, paidFilter])
 
   const totals = records.reduce(
     (acc, r) => {
@@ -165,7 +150,7 @@ export function OwnerRecords() {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold text-ink-800">Records</h1>
+        <RangeFilter value={range} onChange={setRange} />
         <Button
           onClick={() => {
             setForm(emptyForm)
@@ -176,33 +161,7 @@ export function OwnerRecords() {
         </Button>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        {(['today', 'week', 'month', 'all'] as const).map((p) => (
-          <button
-            key={p}
-            onClick={() => {
-              setPreset(p)
-              setCustomRange(null)
-            }}
-            className={`min-h-9 rounded-full px-3.5 text-[13px] font-semibold capitalize ${
-              !customRange && preset === p ? 'bg-ink-900 text-white' : 'bg-ink-50 text-ink-500'
-            }`}
-          >
-            {p === 'all' ? 'All time' : p}
-          </button>
-        ))}
-        <input
-          type="date"
-          value={customRange?.start ?? ''}
-          onChange={(e) => setCustomRange({ start: e.target.value, end: customRange?.end ?? todayLagos() })}
-          className="min-h-9 rounded-lg border border-ink-100 px-2 text-[13px]"
-        />
-        <input
-          type="date"
-          value={customRange?.end ?? ''}
-          onChange={(e) => setCustomRange({ start: customRange?.start ?? '2020-01-01', end: e.target.value })}
-          className="min-h-9 rounded-lg border border-ink-100 px-2 text-[13px]"
-        />
+      <div className="mt-3 flex flex-wrap gap-2">
         <select
           value={sourceFilter}
           onChange={(e) => setSourceFilter(e.target.value as typeof sourceFilter)}
@@ -382,11 +341,7 @@ export function OwnerRecords() {
         </div>
       )}
 
-      <SuccessModal
-        open={showSaveSuccess}
-        title="Record saved!"
-        onClose={() => setShowSaveSuccess(false)}
-      />
+      <SuccessModal open={showSaveSuccess} title="Record saved!" onClose={() => setShowSaveSuccess(false)} />
     </div>
   )
 }

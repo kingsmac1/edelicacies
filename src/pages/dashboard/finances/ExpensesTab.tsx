@@ -5,26 +5,30 @@ import {
   fetchExpenses,
   updateExpense,
   type ExpenseInput,
-} from '../../lib/api/expenses'
-import { fetchManualSales, fetchOnlinePaidOrders } from '../../lib/api/records'
-import { fetchSettings } from '../../lib/api/settings'
-import { formatNaira, todayLagos } from '../../lib/format'
-import { Button } from '../../components/ui/Button'
-import { SuccessModal } from '../../components/ui/SuccessModal'
-import type { ExpenseRow } from '../../types/db'
+} from '../../../lib/api/expenses'
+import { fetchManualSales, fetchOnlinePaidOrders } from '../../../lib/api/records'
+import { fetchSettings } from '../../../lib/api/settings'
+import { defaultRangeValue, resolveRange, type RangeValue } from '../../../lib/dateRange'
+import { RangeFilter } from '../../../components/dashboard/RangeFilter'
+import { formatNaira, todayLagos } from '../../../lib/format'
+import { Button } from '../../../components/ui/Button'
+import { SuccessModal } from '../../../components/ui/SuccessModal'
+import type { ExpenseRow } from '../../../types/db'
 
 const emptyForm: ExpenseInput = { expenseDate: todayLagos(), category: 'Ingredients', amount: 0, note: '' }
 
-export function OwnerExpenses() {
+export function ExpensesTab() {
   const [expenses, setExpenses] = useState<ExpenseRow[]>([])
   const [categories, setCategories] = useState<string[]>(['Ingredients', 'Gas', 'Packaging', 'Transport', 'Staff', 'Other'])
   const [salesTotal, setSalesTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [range, setRange] = useState({ start: todayLagos().slice(0, 8) + '01', end: todayLagos() })
+  const [range, setRange] = useState<RangeValue>(defaultRangeValue)
   const [editing, setEditing] = useState<ExpenseRow | 'new' | null>(null)
   const [form, setForm] = useState<ExpenseInput>(emptyForm)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [showSaveSuccess, setShowSaveSuccess] = useState(false)
+
+  const resolved = resolveRange(range)
 
   async function load() {
     setLoading(true)
@@ -38,10 +42,10 @@ export function OwnerExpenses() {
       setExpenses(exp)
       setCategories(settings.expense_categories)
       const manualSum = manual
-        .filter((m) => m.sale_date >= range.start && m.sale_date <= range.end)
+        .filter((m) => m.sale_date >= resolved.start && m.sale_date <= resolved.end)
         .reduce((sum, m) => sum + m.amount + m.delivery_fee, 0)
       const onlineSum = online
-        .filter((o) => o.menu_date >= range.start && o.menu_date <= range.end)
+        .filter((o) => o.menu_date >= resolved.start && o.menu_date <= resolved.end)
         .reduce((sum, o) => sum + o.total, 0)
       setSalesTotal(manualSum + onlineSum)
     } finally {
@@ -52,11 +56,11 @@ export function OwnerExpenses() {
   useEffect(() => {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range.start, range.end])
+  }, [resolved.start, resolved.end])
 
   const filtered = useMemo(
-    () => expenses.filter((e) => e.expense_date >= range.start && e.expense_date <= range.end),
-    [expenses, range],
+    () => expenses.filter((e) => e.expense_date >= resolved.start && e.expense_date <= resolved.end),
+    [expenses, resolved.start, resolved.end],
   )
   const expenseTotal = filtered.reduce((sum, e) => sum + e.amount, 0)
   const profit = salesTotal - expenseTotal
@@ -78,7 +82,7 @@ export function OwnerExpenses() {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold text-ink-800">Expenses</h1>
+        <RangeFilter value={range} onChange={setRange} />
         <Button
           onClick={() => {
             setForm({ ...emptyForm, category: categories[0] ?? 'Other' })
@@ -87,21 +91,6 @@ export function OwnerExpenses() {
         >
           + Add expense
         </Button>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <input
-          type="date"
-          value={range.start}
-          onChange={(e) => setRange((r) => ({ ...r, start: e.target.value }))}
-          className="min-h-9 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
-        />
-        <input
-          type="date"
-          value={range.end}
-          onChange={(e) => setRange((r) => ({ ...r, end: e.target.value }))}
-          className="min-h-9 min-w-0 rounded-lg border border-ink-100 px-2 text-[13px]"
-        />
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2">
@@ -223,11 +212,7 @@ export function OwnerExpenses() {
         </div>
       )}
 
-      <SuccessModal
-        open={showSaveSuccess}
-        title="Expense saved!"
-        onClose={() => setShowSaveSuccess(false)}
-      />
+      <SuccessModal open={showSaveSuccess} title="Expense saved!" onClose={() => setShowSaveSuccess(false)} />
     </div>
   )
 }
