@@ -3,6 +3,7 @@ import { Header } from './Header'
 import { Footer } from './Footer'
 import { AnnouncementBar } from './AnnouncementBar'
 import { WhatsAppFab } from './WhatsAppFab'
+import { ChatWidget } from './ChatWidget'
 
 // Pages with their own fixed bottom action bar hide the footer and the
 // WhatsApp FAB so nothing overlaps the bar.
@@ -21,6 +22,7 @@ export function PublicLayout() {
       </main>
       {!hasFixedBottomBar && <Footer />}
       {!hasFixedBottomBar && <WhatsAppFab />}
+      {!hasFixedBottomBar && <ChatWidget />}
     </div>
   )
 }
