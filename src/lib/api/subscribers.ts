@@ -29,3 +29,9 @@ export async function unsubscribeById(id: string): Promise<void> {
   const { error } = await supabase.from('subscribers').update({ unsubscribed: true }).eq('id', id)
   if (error) throw error
 }
+
+// Customers who clicked the unsubscribe link in a Messaging email.
+export async function unsubscribeCustomerById(id: string): Promise<void> {
+  const { error } = await supabase.rpc('unsubscribe_customer', { p_id: id })
+  if (error) throw error
+}

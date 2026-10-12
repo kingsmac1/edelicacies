@@ -29,3 +29,44 @@ export async function fetchPublicReviews(): Promise<ReviewRow[]> {
   if (error) throw error
   return (data ?? []) as ReviewRow[]
 }
+
+// Website visitors: adds a review that stays hidden until the owner approves it.
+export async function submitPublicReview(input: {
+  name: string
+  rating: number
+  comment: string
+  website: string
+}): Promise<void> {
+  const { error } = await supabase.rpc('submit_public_review', {
+    p_name: input.name,
+    p_rating: input.rating,
+    p_comment: input.comment,
+    p_website: input.website,
+  })
+  if (error) throw error
+}
+
+// Owner: type in a review received some other way (WhatsApp, in person...).
+export async function createManualReview(input: {
+  customerName: string
+  rating: number
+  comment: string
+  date: string
+  showOnSite: boolean
+}): Promise<void> {
+  const { error } = await supabase.from('reviews').insert({
+    order_id: null,
+    source: 'admin',
+    customer_name: input.customerName.trim() || null,
+    rating: input.rating,
+    comment: input.comment.trim() || null,
+    show_on_site: input.showOnSite,
+    created_at: new Date(`${input.date}T12:00:00`).toISOString(),
+  })
+  if (error) throw error
+}
+
+export async function deleteReview(id: string): Promise<void> {
+  const { error } = await supabase.from('reviews').delete().eq('id', id)
+  if (error) throw error
+}

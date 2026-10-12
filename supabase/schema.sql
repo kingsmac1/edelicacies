@@ -1125,3 +1125,246 @@ create policy "email_templates owner all"
   on email_templates for all to authenticated using (true) with check (true);
 -- No anon policy — only the owner (in the dashboard) reads or edits these.
 -- Edge Functions read them using the service role key, which bypasses RLS.
+
+-- ============================================================================
+-- FAQS (approved answers to common questions — the assistant's knowledge)
+-- ============================================================================
+-- Phase 2 of the AI assistant build. Phase 3 will add an "embedding" column
+-- here so the assistant can search these by meaning.
+
+create table if not exists faqs (
+  id uuid primary key default gen_random_uuid(),
+  question text not null,
+  answer text not null,
+  active boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists faqs_set_updated_at on faqs;
+create trigger faqs_set_updated_at
+  before update on faqs
+  for each row execute function set_updated_at();
+
+alter table faqs enable row level security;
+
+-- The public can read active FAQs; only the logged-in owner can change them.
+drop policy if exists "faqs public read active" on faqs;
+create policy "faqs public read active"
+  on faqs for select to anon using (active = true);
+drop policy if exists "faqs owner all" on faqs;
+create policy "faqs owner all"
+  on faqs for all to authenticated using (true) with check (true);
+
+-- ============================================================================
+-- FAQS: EMBEDDINGS (Phase 3 — search by meaning)
+-- ============================================================================
+-- Each FAQ note gets a 384-number "meaning fingerprint" made by Supabase's
+-- built-in gte-small model (see the embed-faqs Edge Function). Questions from
+-- customers get the same kind of fingerprint, and the closest notes win.
+
+create extension if not exists vector with schema extensions;
+
+alter table faqs add column if not exists embedding extensions.vector(384);
+
+-- If a note's wording changes, its old fingerprint no longer matches it, so
+-- clear it. The embed-faqs function then rebuilds any note that has none.
+create or replace function faqs_clear_embedding()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.question is distinct from old.question
+     or new.answer is distinct from old.answer then
+    new.embedding = null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists faqs_clear_embedding_trigger on faqs;
+create trigger faqs_clear_embedding_trigger
+  before update on faqs
+  for each row execute function faqs_clear_embedding();
+
+-- ============================================================================
+-- FAQS: SEARCH BY MEANING (Phase 3)
+-- ============================================================================
+-- Given a customer's question as a fingerprint, returns the closest active
+-- notes. "<=>" is pgvector's cosine distance (0 = identical meaning), so
+-- "1 - distance" reads as a similarity score: closer to 1 means closer.
+-- Runs as the caller (security invoker), so the same row-level-security
+-- rules apply: visitors only ever get active notes.
+
+create or replace function match_faqs(
+  query_embedding extensions.vector(384),
+  match_count integer default 3
+)
+returns table (id uuid, question text, answer text, similarity double precision)
+language sql
+stable
+set search_path = public, extensions
+as $$
+  select f.id, f.question, f.answer, 1 - (f.embedding <=> query_embedding) as similarity
+  from faqs f
+  where f.active = true and f.embedding is not null
+  order by f.embedding <=> query_embedding
+  limit match_count;
+$$;
+
+grant execute on function match_faqs(extensions.vector, integer) to anon, authenticated;
+
+-- ============================================================================
+-- EMAIL TEMPLATES: pre-order wording
+-- ============================================================================
+-- Orders placed for a later date (pre-orders) now get their own emails.
+-- Insert-only: if you have already edited these in the dashboard, nothing is
+-- overwritten.
+
+insert into email_templates (key, label, subject, body, placeholders) values
+  (
+    'new_order_customer_preorder',
+    'New PRE-ORDER — to customer',
+    'Pre-order {{order_number}} received for {{menu_date}} — Edelicacies',
+    'Thanks, {{customer_name}}! We''ve received your pre-order {{order_number}} for {{menu_date}}. Your meal will be prepared fresh on that day, and delivery starts once it is ready. We''ll email you when your rider is on the way. Payment is confirmed on WhatsApp — we''ll message you shortly to sort that out.',
+    '{{customer_name}}, {{order_number}}, {{menu_date}} (written like "Tuesday, 13 October"), {{total}}'
+  ),
+  (
+    'new_order_owner_preorder',
+    'New PRE-ORDER — to you',
+    'New PRE-ORDER {{order_number}} for {{menu_date}} — {{total}}',
+    'New pre-order for {{menu_date}} from {{customer_name}} ({{customer_phone}}).',
+    '{{customer_name}}, {{customer_phone}}, {{order_number}}, {{menu_date}}, {{total}}, {{delivery_type}}'
+  )
+on conflict (key) do nothing;
+
+-- ============================================================================
+-- REVIEWS: open website reviews + reviews added by the owner
+-- ============================================================================
+-- Reviews used to require an order. Now a review can also come from the
+-- website form (anyone) or be typed in by the owner. Website reviews always
+-- start hidden (show_on_site = false) until the owner switches them on.
+
+alter table reviews alter column order_id drop not null;
+
+alter table reviews
+  add column if not exists source text not null default 'order';
+
+alter table reviews drop constraint if exists reviews_source_check;
+alter table reviews
+  add constraint reviews_source_check check (source in ('order', 'website', 'admin'));
+
+-- Public review submission from the website form. The only thing it can do is
+-- add one hidden review; it never reads or changes anything else.
+create or replace function submit_public_review(
+  p_name text,
+  p_rating integer,
+  p_comment text,
+  p_website text default ''
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name text := nullif(trim(coalesce(p_name, '')), '');
+  v_comment text := nullif(trim(coalesce(p_comment, '')), '');
+begin
+  -- "p_website" is a hidden form field only bots fill in.
+  if coalesce(trim(p_website), '') <> '' then
+    raise exception 'REJECTED';
+  end if;
+  if v_name is null then
+    raise exception 'MISSING_NAME';
+  end if;
+  if char_length(v_name) > 80 then
+    raise exception 'NAME_TOO_LONG';
+  end if;
+  if p_rating is null or p_rating < 1 or p_rating > 5 then
+    raise exception 'INVALID_RATING';
+  end if;
+  if v_comment is not null and char_length(v_comment) > 600 then
+    raise exception 'COMMENT_TOO_LONG';
+  end if;
+  -- Simple flood guard: no more than 10 website reviews an hour in total.
+  if (select count(*) from reviews
+        where source = 'website' and created_at > now() - interval '1 hour') >= 10 then
+    raise exception 'TOO_MANY';
+  end if;
+
+  insert into reviews (order_id, customer_name, rating, comment, show_on_site, source)
+  values (null, v_name, p_rating, v_comment, false, 'website');
+end;
+$$;
+
+revoke all on function submit_public_review(text, integer, text, text) from public;
+grant execute on function submit_public_review(text, integer, text, text) to anon, authenticated;
+
+-- ============================================================================
+-- MESSAGING (dashboard emails to customers / subscribers)
+-- ============================================================================
+
+-- Customers can now opt out of marketing email too (subscribers already could).
+alter table customers add column if not exists unsubscribed boolean not null default false;
+
+-- Public unsubscribe link for customers: only flips that one flag.
+create or replace function unsubscribe_customer(p_id uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update customers set unsubscribed = true where id = p_id;
+$$;
+
+revoke all on function unsubscribe_customer(uuid) from public;
+grant execute on function unsubscribe_customer(uuid) to anon, authenticated;
+
+-- One row per message sent from Dashboard -> Messaging.
+create table if not exists email_campaigns (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  sent_by text,
+  subject text not null,
+  body text not null,
+  audience text not null,
+  audience_label text,
+  recipient_count integer not null default 0,
+  sent_count integer not null default 0,
+  failed_count integer not null default 0,
+  failed_list text
+);
+
+create index if not exists email_campaigns_created_idx on email_campaigns(created_at desc);
+
+alter table email_campaigns enable row level security;
+drop policy if exists "email_campaigns owner all" on email_campaigns;
+create policy "email_campaigns owner all"
+  on email_campaigns for all to authenticated using (true) with check (true);
+
+-- How many emails per day your email plan allows (Resend free plan = 100).
+-- The Messaging page stops a broadcast that would use up the allowance and
+-- starve order emails. Raise it here if you upgrade the plan.
+insert into settings (key, value) values ('email_daily_limit', '{"limit": 100}')
+on conflict (key) do nothing;
+
+-- Photos you upload inside the email builder.
+insert into storage.buckets (id, name, public)
+values ('email-images', 'email-images', true)
+on conflict (id) do nothing;
+
+drop policy if exists "email-images public read" on storage.objects;
+create policy "email-images public read"
+  on storage.objects for select to anon, authenticated
+  using (bucket_id = 'email-images');
+
+drop policy if exists "email-images owner write" on storage.objects;
+create policy "email-images owner write"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'email-images');
+
+drop policy if exists "email-images owner delete" on storage.objects;
+create policy "email-images owner delete"
+  on storage.objects for delete to authenticated
+  using (bucket_id = 'email-images');

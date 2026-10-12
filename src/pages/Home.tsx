@@ -3,6 +3,7 @@ import { Hero } from '../components/home/Hero'
 import { CategoryTabs } from '../components/home/CategoryTabs'
 import { NotifySignup } from '../components/home/NotifySignup'
 import { Testimonials } from '../components/home/Testimonials'
+import { ReviewForm } from '../components/home/ReviewForm'
 import { EmptyMenuState } from '../components/home/EmptyMenuState'
 import { MenuItemCard } from '../components/menu/MenuItemCard'
 import { VariationSheet } from '../components/menu/VariationSheet'
@@ -78,7 +79,7 @@ export function Home() {
             )}
 
             {hasTomorrow && tomorrowMenu && (
-              <section className={hasToday ? 'mt-10 border-t border-ink-100 pt-8' : 'py-5'}>
+              <section id="tomorrow" className={hasToday ? 'mt-10 border-t border-ink-100 pt-8' : 'py-5'}>
                 <div className="mb-1 flex flex-wrap items-center gap-2">
                   <h2 className="text-xl font-semibold text-ink-800">Tomorrow's Menu</h2>
                   <span className="rounded-full bg-brand-50 px-2.5 py-1 text-[12px] font-semibold text-brand-600">
@@ -100,8 +101,15 @@ export function Home() {
         )}
       </div>
 
-      <Testimonials />
-      <NotifySignup />
+      {/* Reviews: full-width black band */}
+      <div className="mt-16 bg-ink-900 sm:mt-24">
+        <Testimonials />
+        <ReviewForm />
+      </div>
+      {/* The footer has a top margin for other pages; pull it up so the red band meets the black footer. */}
+      <div className="-mb-16">
+        <NotifySignup />
+      </div>
 
       <VariationSheet
         key={openContext ? `${openContext.menu.date}:${openContext.item.id}` : 'closed'}

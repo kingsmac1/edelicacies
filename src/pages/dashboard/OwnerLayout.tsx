@@ -14,6 +14,7 @@ import {
   IconStar,
   IconBell,
   IconMail,
+  IconSend,
   IconSliders,
   IconMore,
 } from '../../components/dashboard/icons'
@@ -33,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard/discount-codes', label: 'Discount Codes', icon: IconTag },
   { to: '/dashboard/reviews', label: 'Reviews', icon: IconStar },
   { to: '/dashboard/subscribers', label: 'Subscribers', icon: IconBell },
+  { to: '/dashboard/messaging', label: 'Messaging', icon: IconSend },
   { to: '/dashboard/email-templates', label: 'Email Templates', icon: IconMail },
   { to: '/dashboard/settings', label: 'Settings', icon: IconSliders },
 ]

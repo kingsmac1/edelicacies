@@ -122,3 +122,40 @@ button, a[role="button"], input, select, textarea {
   stroke-dashoffset: 48;
   animation: check-in 0.35s ease-out 0.55s forwards;
 }
+
+/* Scroll-reveal: content fades and rises into view once. */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.reveal[data-visible='true'] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Small all-caps label above a section heading. */
+.eyebrow {
+  font-size: 0.6875rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+/* Large, light, wide-tracked section heading. */
+.display-heading {
+  text-transform: uppercase;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  line-height: 1.05;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

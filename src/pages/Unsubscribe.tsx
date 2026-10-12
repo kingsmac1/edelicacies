@@ -1,21 +1,24 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { unsubscribeById } from '../lib/api/subscribers'
+import { unsubscribeById, unsubscribeCustomerById } from '../lib/api/subscribers'
 
 export function Unsubscribe() {
   const [params] = useSearchParams()
   const id = params.get('id')
+  const customerId = params.get('c')
   const [status, setStatus] = useState<'working' | 'done' | 'error'>('working')
 
   useEffect(() => {
-    if (!id) {
+    const target = customerId ?? id
+    if (!target) {
       setStatus('error')
       return
     }
-    unsubscribeById(id)
+    const run = customerId ? unsubscribeCustomerById : unsubscribeById
+    run(target)
       .then(() => setStatus('done'))
       .catch(() => setStatus('error'))
-  }, [id])
+  }, [id, customerId])
 
   return (
     <div className="mx-auto max-w-sm px-4 py-24 text-center">
@@ -24,7 +27,7 @@ export function Unsubscribe() {
         <>
           <h1 className="text-xl font-semibold text-ink-800">You're unsubscribed</h1>
           <p className="mt-2 text-[15px] text-ink-400">
-            You won't get any more "menu is live" emails from us. Come back any time!
+            You won't get any more promotional emails from us. You'll still get emails about orders you place. Come back any time!
           </p>
         </>
       )}

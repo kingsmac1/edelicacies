@@ -118,6 +118,15 @@ export function IconMail(props: IconProps) {
   )
 }
 
+export function IconSend(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M21 3 10.5 13.5" />
+      <path d="M21 3 14.5 21l-4-7.5L3 9.5 21 3Z" />
+    </Base>
+  )
+}
+
 export function IconSliders(props: IconProps) {
   return (
     <Base {...props}>

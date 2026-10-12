@@ -179,9 +179,12 @@ export interface DiscountCodeRow {
   created_at: string
 }
 
+export type ReviewSource = 'order' | 'website' | 'admin'
+
 export interface ReviewRow {
   id: string
-  order_id: string
+  order_id: string | null
+  source: ReviewSource
   customer_name: string | null
   rating: number
   comment: string | null

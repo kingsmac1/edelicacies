@@ -25,15 +25,15 @@ export function NotifySignup() {
   }
 
   return (
-    <section className="mx-auto max-w-6xl px-4 py-12">
-      <div className="rounded-3xl bg-ink-900 p-6 sm:p-10">
+    <section className="bg-brand-500">
+      <div className="mx-auto max-w-6xl px-4 py-12 sm:py-14">
         <h2 className="text-2xl font-medium text-white">Notify me when the menu is live</h2>
-        <p className="mt-2 max-w-md text-[15px] text-ink-200">
+        <p className="mt-2 max-w-md text-[15px] text-white/90">
           On days without a menu, we'll ping you the moment it's ready — straight to your email and WhatsApp.
         </p>
 
         {submitted ? (
-          <p className="mt-6 rounded-xl bg-white/10 px-4 py-3 text-[15px] font-medium text-white">
+          <p className="mt-6 rounded-xl bg-white/20 px-4 py-3 text-[15px] font-medium text-white">
             Thanks! We'll let you know as soon as the next menu is live.
           </p>
         ) : (
@@ -44,7 +44,7 @@ export function NotifySignup() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Full name"
-              className="min-h-12 rounded-xl border-0 bg-white px-4 text-[15px] text-ink-800 placeholder:text-ink-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="min-h-12 rounded-xl border-0 bg-white px-4 text-[15px] text-ink-800 placeholder:text-ink-300 focus:outline-none focus:ring-2 focus:ring-ink-900"
             />
             <input
               required
@@ -52,7 +52,7 @@ export function NotifySignup() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Email address"
-              className="min-h-12 rounded-xl border-0 bg-white px-4 text-[15px] text-ink-800 placeholder:text-ink-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="min-h-12 rounded-xl border-0 bg-white px-4 text-[15px] text-ink-800 placeholder:text-ink-300 focus:outline-none focus:ring-2 focus:ring-ink-900"
             />
             <input
               required
@@ -60,10 +60,10 @@ export function NotifySignup() {
               value={whatsapp}
               onChange={(e) => setWhatsapp(e.target.value)}
               placeholder="WhatsApp number"
-              className="min-h-12 rounded-xl border-0 bg-white px-4 text-[15px] text-ink-800 placeholder:text-ink-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="min-h-12 rounded-xl border-0 bg-white px-4 text-[15px] text-ink-800 placeholder:text-ink-300 focus:outline-none focus:ring-2 focus:ring-ink-900"
             />
-            {error && <p className="text-[13px] font-medium text-brand-300 sm:col-span-3">{error}</p>}
-            <Button type="submit" className="sm:col-span-3" disabled={submitting}>
+            {error && <p className="rounded-lg bg-white/20 px-3 py-2 text-[13px] font-semibold text-white sm:col-span-3">{error}</p>}
+            <Button type="submit" variant="dark" className="sm:col-span-3" disabled={submitting}>
               {submitting ? 'Signing up…' : 'Notify me'}
             </Button>
           </form>
