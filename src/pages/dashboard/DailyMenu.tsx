@@ -31,7 +31,10 @@ export function OwnerDailyMenu() {
   const [error, setError] = useState<string | null>(null)
   const [showSaveSuccess, setShowSaveSuccess] = useState(false)
   const [notifying, setNotifying] = useState(false)
-  const [notifyResult, setNotifyResult] = useState<string | null>(null)
+  const [notifyOutcome, setNotifyOutcome] = useState<
+    { sent: number; total: number } | 'failed' | null
+  >(null)
+  const [tab, setTab] = useState<'food' | 'drink'>('food')
 
   async function load(forDate: string) {
     setLoading(true)
@@ -102,7 +105,7 @@ export function OwnerDailyMenu() {
           }
         }
       }
-      setNotifyResult(null)
+      setNotifyOutcome(null)
       setShowSaveSuccess(true)
       await load(date)
     } catch (err) {
@@ -114,12 +117,11 @@ export function OwnerDailyMenu() {
 
   async function handleNotify() {
     setNotifying(true)
-    setNotifyResult(null)
     try {
       const result = await notifySubscribers(date)
-      setNotifyResult(
-        result ? `Sent to ${result.sent} of ${result.subscriberCount} subscribers.` : 'Could not send right now.',
-      )
+      // Close the "Menu saved" popup and show the outcome in its own popup.
+      setShowSaveSuccess(false)
+      setNotifyOutcome(result ? { sent: result.sent, total: result.subscriberCount } : 'failed')
     } finally {
       setNotifying(false)
     }
@@ -133,6 +135,22 @@ export function OwnerDailyMenu() {
   }
 
   const includedCount = Object.values(rows).filter((r) => r.included).length
+
+  // Everything ticked for this day, flattened, for the summary strip at the top.
+  const selected = items.flatMap((item) =>
+    item.menu_item_variations
+      .filter((v) => rows[v.id]?.included)
+      .map((v) => ({
+        variationId: v.id,
+        category: item.category,
+        name: item.name,
+        label: v.label,
+        slots: rows[v.id].slotsTotal,
+      })),
+  )
+  const countFor = (cat: 'food' | 'drink') => selected.filter((s) => s.category === cat).length
+  const hasFood = items.some((i) => i.category === 'food')
+  const hasDrink = items.some((i) => i.category === 'drink')
 
   return (
     <div>
@@ -167,10 +185,68 @@ export function OwnerDailyMenu() {
           No active menu items yet — add some under Menu Items first.
         </p>
       ) : (
-        <div className="mt-4 flex flex-col gap-8">
+        <div className="mt-4 flex flex-col gap-4">
+          <div className="rounded-2xl bg-white p-3 ring-1 ring-ink-100">
+            <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-ink-400">
+              Selected for {formatDateLong(date)} ({selected.length})
+            </p>
+            {selected.length === 0 ? (
+              <p className="text-[13px] text-ink-400">Nothing selected yet. Tick items below.</p>
+            ) : (
+              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                {selected.map((s) => (
+                  <span
+                    key={s.variationId}
+                    className={`flex shrink-0 items-center gap-1.5 rounded-full py-1.5 pl-3 pr-1.5 text-[12.5px] ${
+                      s.category === 'food' ? 'bg-brand-50 text-brand-700' : 'bg-sky-50 text-sky-700'
+                    }`}
+                  >
+                    <button type="button" onClick={() => setTab(s.category)} className="font-medium">
+                      {s.name} · {s.label} <span className="opacity-60">×{s.slots}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${s.name} ${s.label}`}
+                      onClick={() => updateRow(s.variationId, { included: false })}
+                      className="flex h-5 w-5 items-center justify-center rounded-full bg-white/70 text-[13px] leading-none"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2" role="tablist">
+            {(
+              [
+                ['food', 'Food', hasFood],
+                ['drink', 'Drinks', hasDrink],
+              ] as const
+            ).map(([value, label, available]) =>
+              available ? (
+                <button
+                  key={value}
+                  role="tab"
+                  aria-selected={tab === value}
+                  onClick={() => setTab(value)}
+                  className={`min-h-11 rounded-full px-5 text-[14px] font-semibold ${
+                    tab === value ? 'bg-ink-900 text-white' : 'bg-white text-ink-600 ring-1 ring-ink-100'
+                  }`}
+                >
+                  {label}
+                  <span className={`ml-2 text-[12px] ${tab === value ? 'text-ink-200' : 'text-ink-400'}`}>
+                    {countFor(value)} selected
+                  </span>
+                </button>
+              ) : null,
+            )}
+          </div>
+
           {(['food', 'drink'] as const).map((cat) => {
             const catItems = items.filter((i) => i.category === cat)
-            if (catItems.length === 0) return null
+            if (catItems.length === 0 || cat !== tab) return null
             return (
               <section key={cat}>
                 <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-ink-400">
@@ -248,8 +324,31 @@ export function OwnerDailyMenu() {
         <Button fullWidth onClick={() => void handleNotify()} disabled={notifying}>
           {notifying ? 'Sending…' : 'Notify subscribers about this menu'}
         </Button>
-        {notifyResult && <p className="text-[13px] text-ink-500">{notifyResult}</p>}
       </SuccessModal>
+
+      <SuccessModal
+        open={notifyOutcome !== null}
+        tone={notifyOutcome === 'failed' || (notifyOutcome !== null && notifyOutcome.sent < notifyOutcome.total) ? 'warning' : 'success'}
+        title={
+          notifyOutcome === 'failed'
+            ? 'Could not notify subscribers'
+            : notifyOutcome && notifyOutcome.total === 0
+              ? 'No subscribers yet'
+              : notifyOutcome && notifyOutcome.sent < notifyOutcome.total
+                ? 'Some emails did not go out'
+                : 'Subscribers notified!'
+        }
+        message={
+          notifyOutcome === 'failed'
+            ? 'Something went wrong while sending. Please try again in a moment.'
+            : notifyOutcome
+              ? notifyOutcome.total === 0
+                ? 'Nobody has subscribed for menu alerts yet.'
+                : `${formatDateLong(date)}'s menu was emailed to ${notifyOutcome.sent} of ${notifyOutcome.total} subscriber${notifyOutcome.total === 1 ? '' : 's'}.`
+              : undefined
+        }
+        onClose={() => setNotifyOutcome(null)}
+      />
     </div>
   )
 }

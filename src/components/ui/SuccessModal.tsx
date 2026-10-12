@@ -5,18 +5,34 @@ interface SuccessModalProps {
   open: boolean
   title?: string
   message?: string
+  /** 'warning' swaps the green tick for an amber alert, e.g. when only some emails went out. */
+  tone?: 'success' | 'warning'
   onClose: () => void
   /** Extra actions rendered below the default close button, e.g. "Notify subscribers". */
   children?: ReactNode
 }
 
-export function SuccessModal({ open, title = 'Saved!', message, onClose, children }: SuccessModalProps) {
+export function SuccessModal({
+  open,
+  title = 'Saved!',
+  message,
+  tone = 'success',
+  onClose,
+  children,
+}: SuccessModalProps) {
   if (!open) return null
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-ink-900/50" />
       <div className="animate-pop-in relative w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-xl">
+        {tone === 'warning' ? (
+          <svg className="mx-auto h-16 w-16 text-amber-500" viewBox="0 0 52 52" fill="none" aria-hidden="true">
+            <circle cx="26" cy="26" r="25" stroke="currentColor" strokeWidth="2.5" />
+            <path d="M26 14v15" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
+            <circle cx="26" cy="37" r="2.2" fill="currentColor" />
+          </svg>
+        ) : (
         <svg
           className="mx-auto h-16 w-16 text-emerald-500"
           viewBox="0 0 52 52"
@@ -40,6 +56,7 @@ export function SuccessModal({ open, title = 'Saved!', message, onClose, childre
             strokeLinejoin="round"
           />
         </svg>
+        )}
 
         <h3 className="mt-4 text-lg font-semibold text-ink-800">{title}</h3>
         {message && <p className="mt-1.5 text-[14px] text-ink-500">{message}</p>}

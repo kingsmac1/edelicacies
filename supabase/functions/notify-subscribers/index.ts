@@ -18,9 +18,13 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
+// Content-Type matters: without it the browser library hands the reply back
+// as plain text instead of an object (the dashboard then showed
+// "Sent to undefined of undefined subscribers").
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Content-Type': 'application/json',
 }
 
 function errorMessage(err: unknown): string {
@@ -51,6 +55,21 @@ function dateLabel(menuDate: string): string {
     month: 'long',
   }).format(new Date(Date.UTC(y, m - 1, d, 12)))
   return `${formatted}'s`
+}
+
+// "Tuesday, 13 October" — printed in the email so the date is never ambiguous.
+function longDate(menuDate: string): string {
+  const [y, m, d] = menuDate.split('-').map(Number)
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Lagos',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(Date.UTC(y, m - 1, d, 12)))
+}
+
+function esc(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
 }
 
 function paragraphs(text: string): string {
@@ -119,13 +138,13 @@ Deno.serve(async (req) => {
       .eq('menu_date', menuDate)
       .maybeSingle()
 
-    type MenuItemRef = { name: string; category: 'food' | 'drink' }
-    let foodNames: string[] = []
-    let drinkNames: string[] = []
+    type MenuItemRef = { name: string; category: 'food' | 'drink'; image_url: string | null }
+    let foodItems: MenuItemRef[] = []
+    let drinkItems: MenuItemRef[] = []
     if (dailyMenu) {
       const { data: slots } = await supabase
         .from('daily_menu_slots')
-        .select('menu_items(name, category)')
+        .select('menu_items(name, category, image_url)')
         .eq('daily_menu_id', dailyMenu.id)
 
       const items: MenuItemRef[] = (slots ?? [])
@@ -134,8 +153,10 @@ Deno.serve(async (req) => {
         )
         .filter((i: MenuItemRef | null | undefined): i is MenuItemRef => Boolean(i?.name))
 
-      foodNames = [...new Set(items.filter((i: MenuItemRef) => i.category === 'food').map((i: MenuItemRef) => i.name))]
-      drinkNames = [...new Set(items.filter((i: MenuItemRef) => i.category === 'drink').map((i: MenuItemRef) => i.name))]
+      // One entry per dish (a dish with several sizes appears once).
+      const unique = (list: MenuItemRef[]) => [...new Map(list.map((i) => [i.name, i])).values()]
+      foodItems = unique(items.filter((i: MenuItemRef) => i.category === 'food'))
+      drinkItems = unique(items.filter((i: MenuItemRef) => i.category === 'drink'))
     }
 
     const { data: subscribers, error: subError } = await supabase
@@ -145,6 +166,11 @@ Deno.serve(async (req) => {
     if (subError) throw subError
 
     const orderLink = SITE_URL || 'our website'
+    // For a future day, the button jumps straight to the Tomorrow's Menu
+    // section instead of the top of the homepage (which shows today first).
+    const lagosToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos' }).format(new Date())
+    const isFutureMenu = menuDate > lagosToday
+    const orderUrl = isFutureMenu && SITE_URL ? `${SITE_URL}/#tomorrow` : SITE_URL
     const tmpl = await getTemplate(
       supabase,
       'menu_live_subscribers',
@@ -154,19 +180,37 @@ Deno.serve(async (req) => {
     // The only placeholder here is {{date_label}} ("Today's" / "Tomorrow's" /
     // a full date) — the item list is always generated and appended below
     // the owner's text, the same way order details are in the other emails.
-    const vars = { date_label: dateLabel(menuDate) }
-    const subject = render(tmpl.subject, vars)
-    const bodyText = paragraphs(render(tmpl.body, vars))
+    const label = dateLabel(menuDate)
+    const vars = { date_label: label }
 
-    function categorySection(label: string, names: string[]): string {
-      if (names.length === 0) return ''
-      const items = names.map((n) => `<li style="padding:3px 0;">${n}</li>`).join('')
+    // Safety net: an older template may still say "Today's" in plain text.
+    // If this menu is for another day, swap it for the right label so the
+    // subject and message can never claim the wrong day.
+    const fixDay = (text: string) =>
+      label === "Today's" ? text : text.replace(/\btoday['\u2019]s\b/gi, label)
+
+    const subject = fixDay(render(tmpl.subject, vars))
+    const bodyText = paragraphs(fixDay(render(tmpl.body, vars)))
+
+    function categorySection(label: string, list: MenuItemRef[]): string {
+      if (list.length === 0) return ''
+      const rows = list
+        .map((i) => {
+          const photo = i.image_url
+            ? `<img src="${i.image_url}" alt="${esc(i.name)}" width="56" height="56" style="display:block;width:56px;height:56px;object-fit:cover;border-radius:10px;border:0;" />`
+            : ''
+          return `<tr>
+            <td width="68" style="padding:6px 12px 6px 0;vertical-align:middle;">${photo}</td>
+            <td style="padding:6px 0;vertical-align:middle;font-weight:600;">${esc(i.name)}</td>
+          </tr>`
+        })
+        .join('')
       return `
         <p style="margin:16px 0 4px;font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:0.04em;color:#6b6b75;">${label}</p>
-        <ul style="margin:0;padding-left:20px;">${items}</ul>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">${rows}</table>
       `
     }
-    const itemListHtml = categorySection('Food', foodNames) + categorySection('Drinks', drinkNames)
+    const itemListHtml = categorySection('Food', foodItems) + categorySection('Drinks', drinkItems)
 
     let sent = 0
     if (RESEND_API_KEY) {
@@ -174,8 +218,9 @@ Deno.serve(async (req) => {
         const html = emailShell(
           `
           ${bodyText}
+          <p style="margin:12px 0 0;font-weight:600;">Menu for ${longDate(menuDate)}${isFutureMenu ? ' (pre-order)' : ''}</p>
           ${itemListHtml}
-          <p><a href="${SITE_URL}" style="color:#ff002c;">Order now at ${orderLink}</a></p>
+          <p><a href="${orderUrl}" style="color:#ff002c;">${isFutureMenu ? 'Pre-order now' : 'Order now'} at ${orderLink}</a></p>
         `,
           sub.id,
         )

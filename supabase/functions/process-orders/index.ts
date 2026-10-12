@@ -46,6 +46,55 @@ async function getTemplate(supabase: any, key: string, fallbackSubject: string, 
   return { subject: data?.subject ?? fallbackSubject, body: data?.body ?? fallbackBody }
 }
 
+function esc(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+}
+
+function formatNaira(n: number): string {
+  return '₦' + Math.round(n).toLocaleString('en-NG')
+}
+
+type EmailItem = {
+  menu_item_id?: string | null
+  item_name: string
+  variation_label: string
+  unit_price: number
+  quantity: number
+}
+
+// Photos of the dishes in an order, keyed by menu item id. Items whose photo
+// is missing (or whose menu item was deleted) simply show without a picture.
+// deno-lint-ignore no-explicit-any
+async function loadItemImages(supabase: any, items: EmailItem[]): Promise<Record<string, string>> {
+  const ids = [...new Set(items.map((i) => i.menu_item_id).filter((id): id is string => Boolean(id)))]
+  if (ids.length === 0) return {}
+  const { data } = await supabase.from('menu_items').select('id, image_url').in('id', ids)
+  const byId: Record<string, string> = {}
+  for (const row of data ?? []) if (row.image_url) byId[row.id] = row.image_url
+  return byId
+}
+
+// One row per item: photo, name, size x quantity, and (optionally) the price.
+function itemsTable(items: EmailItem[], images: Record<string, string> = {}, showPrices = true): string {
+  const rows = items
+    .map((i) => {
+      const src = i.menu_item_id ? images[i.menu_item_id] : undefined
+      const photo = src
+        ? `<img src="${src}" alt="${esc(i.item_name)}" width="56" height="56" style="display:block;width:56px;height:56px;object-fit:cover;border-radius:10px;border:0;" />`
+        : ''
+      return `<tr>
+        <td width="68" style="padding:8px 12px 8px 0;vertical-align:middle;">${photo}</td>
+        <td style="padding:8px 0;vertical-align:middle;">
+          <span style="font-weight:600;">${esc(i.item_name)}</span><br />
+          <span style="color:#6b6b75;font-size:13px;">${esc(i.variation_label)} × ${i.quantity}</span>
+        </td>
+        ${showPrices ? `<td style="padding:8px 0;text-align:right;vertical-align:middle;">${formatNaira(i.unit_price * i.quantity)}</td>` : ''}
+      </tr>`
+    })
+    .join('')
+  return `<table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0;">${rows}</table>`
+}
+
 function emailShell(bodyHtml: string): string {
   return `<!doctype html>
 <html>
@@ -100,6 +149,8 @@ Deno.serve(async () => {
       }
       results.autoCancelled++
       const vars = { customer_name: order.customer_name, order_number: order.order_number }
+      const { data: cancelledItems } = await supabase.from('order_items').select('*').eq('order_id', order.id)
+      const cancelledImages = await loadItemImages(supabase, cancelledItems ?? [])
       const tmpl = await getTemplate(
         supabase,
         'auto_cancel',
@@ -111,6 +162,7 @@ Deno.serve(async () => {
         render(tmpl.subject, vars),
         emailShell(`
           ${paragraphs(render(tmpl.body, vars))}
+          ${itemsTable(cancelledItems ?? [], cancelledImages, false)}
           ${SITE_URL ? `<p><a href="${SITE_URL}" style="color:#ff002c;">Order again</a></p>` : ''}
         `),
       )
@@ -137,6 +189,8 @@ Deno.serve(async () => {
         ? `${SITE_URL}/review?order=${order.order_number}&phone=${encodeURIComponent(order.customer_phone)}`
         : null
       const vars = { customer_name: order.customer_name, order_number: order.order_number }
+      const { data: reviewItems } = await supabase.from('order_items').select('*').eq('order_id', order.id)
+      const reviewImages = await loadItemImages(supabase, reviewItems ?? [])
       const tmpl = await getTemplate(
         supabase,
         'review_request',
@@ -148,6 +202,7 @@ Deno.serve(async () => {
         render(tmpl.subject, vars),
         emailShell(`
           ${paragraphs(render(tmpl.body, vars))}
+          ${itemsTable(reviewItems ?? [], reviewImages, false)}
           ${
             reviewLink
               ? `<p><a href="${reviewLink}" style="color:#ff002c;">Leave a quick review</a></p>`

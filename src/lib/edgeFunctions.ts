@@ -9,6 +9,14 @@ export async function sendOrderEmail(orderId: string, event: 'new_order' | 'stag
   if (error) console.error('send-order-email failed', error)
 }
 
+function safeJson(text: string): { subscriberCount?: unknown; sent?: unknown } | null {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
 export async function notifySubscribers(
   menuDate: string,
 ): Promise<{ subscriberCount: number; sent: number } | null> {
@@ -17,5 +25,13 @@ export async function notifySubscribers(
     console.error('notify-subscribers failed', error)
     return null
   }
-  return data as { subscriberCount: number; sent: number }
+  // Older deployed versions reply as plain text; accept both.
+  const parsed = typeof data === 'string' ? safeJson(data) : data
+  const subscriberCount = Number(parsed?.subscriberCount)
+  const sent = Number(parsed?.sent)
+  if (!Number.isFinite(subscriberCount) || !Number.isFinite(sent)) {
+    console.error('notify-subscribers returned an unexpected reply', data)
+    return null
+  }
+  return { subscriberCount, sent }
 }
