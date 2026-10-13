@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import {
   fetchConversations,
   fetchThread,
+  deleteConversation,
+  deleteConversationsOlderThan,
   markConversationRead,
   sendOwnerReply,
   setConversationMode,
@@ -103,6 +105,35 @@ export function OwnerInbox() {
     }
   }
 
+  async function handleDelete() {
+    if (!selectedId) return
+    if (!window.confirm('Delete this chat for good? The customer will not be able to continue it.')) return
+    setBusy(true)
+    try {
+      await deleteConversation(selectedId)
+      setParams({})
+      setThread([])
+      await loadList()
+    } catch {
+      setError('Could not delete this chat. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleClearOld() {
+    if (!window.confirm('Delete every chat with no activity for 30 days or more? This cannot be undone.')) return
+    setBusy(true)
+    try {
+      await deleteConversationsOlderThan(30)
+      await loadList()
+    } catch {
+      setError('Could not clear old chats.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleSend(e: React.FormEvent) {
     e.preventDefault()
     const text = draft.trim()
@@ -154,6 +185,16 @@ export function OwnerInbox() {
               </button>
             ))}
           </div>
+
+          {conversations.length > 0 && (
+            <button
+              onClick={() => void handleClearOld()}
+              disabled={busy}
+              className="mb-3 text-[12px] font-medium text-ink-400 underline hover:text-brand-600"
+            >
+              Delete chats older than 30 days
+            </button>
+          )}
 
           {loading ? (
             <p className="py-8 text-center text-[14px] text-ink-400">Loading…</p>
@@ -220,15 +261,24 @@ export function OwnerInbox() {
                     <p className="truncate text-[12px] text-ink-400">{selected.customer_contact}</p>
                   )}
                 </div>
-                {selected.mode === 'owner' ? (
-                  <Button variant="secondary" onClick={() => void handleHandBack()} disabled={busy}>
-                    Hand back to AI
-                  </Button>
-                ) : (
-                  <Button onClick={() => void handleTakeOver()} disabled={busy}>
-                    Take over
-                  </Button>
-                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void handleDelete()}
+                    disabled={busy}
+                    className="min-h-11 rounded-full px-3 text-[13px] font-semibold text-ink-400 hover:text-brand-600"
+                  >
+                    Delete chat
+                  </button>
+                  {selected.mode === 'owner' ? (
+                    <Button variant="secondary" onClick={() => void handleHandBack()} disabled={busy}>
+                      Hand back to AI
+                    </Button>
+                  ) : (
+                    <Button onClick={() => void handleTakeOver()} disabled={busy}>
+                      Take over
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div

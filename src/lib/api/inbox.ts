@@ -74,3 +74,16 @@ export async function countUnreadConversations(): Promise<number> {
   if (error) throw error
   return count ?? 0
 }
+
+// Permanently removes a chat and all its messages.
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const { error } = await supabase.from('conversations').delete().eq('id', conversationId)
+  if (error) throw error
+}
+
+// Removes every chat that has had no activity for `days` days.
+export async function deleteConversationsOlderThan(days: number): Promise<void> {
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
+  const { error } = await supabase.from('conversations').delete().lt('last_message_at', cutoff)
+  if (error) throw error
+}
