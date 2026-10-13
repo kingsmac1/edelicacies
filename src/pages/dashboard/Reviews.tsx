@@ -4,6 +4,7 @@ import {
   deleteReview,
   fetchAllReviews,
   setReviewShowOnSite,
+  updateReview,
   type ReviewWithOrder,
 } from '../../lib/api/reviews'
 import { todayLagos } from '../../lib/format'
@@ -33,6 +34,14 @@ export function OwnerReviews() {
   const [date, setDate] = useState(todayLagos())
   const [showOnSite, setShowOnSite] = useState(true)
   const [saving, setSaving] = useState(false)
+
+  // edit-review form (one review at a time)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editRating, setEditRating] = useState(5)
+  const [editComment, setEditComment] = useState('')
+  const [editDate, setEditDate] = useState(todayLagos())
+  const [editSaving, setEditSaving] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -66,6 +75,34 @@ export function OwnerReviews() {
       setReviews((prev) => prev.filter((r) => r.id !== id))
     } catch {
       setError('Could not delete that review. Please try again.')
+    }
+  }
+
+  function startEdit(r: ReviewWithOrder) {
+    setEditingId(r.id)
+    setEditName(r.customer_name ?? '')
+    setEditRating(r.rating)
+    setEditComment(r.comment ?? '')
+    setEditDate(r.created_at.slice(0, 10))
+  }
+
+  async function handleEditSave(r: ReviewWithOrder) {
+    setEditSaving(true)
+    setError(null)
+    try {
+      await updateReview(r.id, {
+        customerName: editName,
+        rating: editRating,
+        comment: editComment,
+        date: editDate,
+        keepTimeOf: r.created_at,
+      })
+      setEditingId(null)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save your changes.')
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -210,7 +247,63 @@ export function OwnerReviews() {
         </p>
       ) : (
         <div className="mt-4 flex flex-col gap-2">
-          {list.map((r) => (
+          {list.map((r) =>
+            editingId === r.id ? (
+              <div key={r.id} className="flex flex-col gap-3 rounded-xl bg-white p-4 ring-2 ring-brand-500">
+                <p className="text-[13px] font-semibold text-ink-700">Editing this review</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1 block text-[13px] font-medium text-ink-700">Name</span>
+                    <input
+                      value={editName}
+                      maxLength={80}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="min-h-11 w-full rounded-xl border border-ink-100 px-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[13px] font-medium text-ink-700">Date</span>
+                    <input
+                      type="date"
+                      value={editDate}
+                      max={todayLagos()}
+                      onChange={(e) => setEditDate(e.target.value)}
+                      className="min-h-11 w-full rounded-xl border border-ink-100 px-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </label>
+                </div>
+                <div className="flex gap-1">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      aria-label={`${n} star${n === 1 ? '' : 's'}`}
+                      onClick={() => setEditRating(n)}
+                      className={`flex h-10 w-10 items-center justify-center text-2xl leading-none ${
+                        n <= editRating ? 'text-brand-500' : 'text-ink-200'
+                      }`}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  rows={3}
+                  value={editComment}
+                  maxLength={600}
+                  onChange={(e) => setEditComment(e.target.value)}
+                  className="w-full rounded-xl border border-ink-100 px-3 py-2.5 text-[14px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <div className="flex gap-2">
+                  <Button onClick={() => void handleEditSave(r)} disabled={editSaving}>
+                    {editSaving ? 'Saving…' : 'Save changes'}
+                  </Button>
+                  <Button variant="ghost" onClick={() => setEditingId(null)} disabled={editSaving}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
             <div key={r.id} className="rounded-xl bg-white p-4 ring-1 ring-ink-100">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -248,17 +341,26 @@ export function OwnerReviews() {
                     />
                     Show on site
                   </label>
-                  <button
-                    onClick={() => void handleDelete(r.id)}
-                    className="text-[12px] font-medium text-ink-400 hover:text-brand-600"
-                  >
-                    Delete
-                  </button>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => startEdit(r)}
+                      className="text-[12px] font-semibold text-ink-600 hover:text-brand-600"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => void handleDelete(r.id)}
+                      className="text-[12px] font-medium text-ink-400 hover:text-brand-600"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
               {r.comment && <p className="mt-2 text-[14px] text-ink-600">{r.comment}</p>}
             </div>
-          ))}
+            ),
+          )}
         </div>
       )}
 

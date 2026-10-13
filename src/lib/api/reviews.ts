@@ -70,3 +70,21 @@ export async function deleteReview(id: string): Promise<void> {
   const { error } = await supabase.from('reviews').delete().eq('id', id)
   if (error) throw error
 }
+
+// Owner: fix a typo, soften wording, change the date or rating of any review.
+export async function updateReview(
+  id: string,
+  input: { customerName: string; rating: number; comment: string; date: string; keepTimeOf: string },
+): Promise<void> {
+  const patch: Record<string, unknown> = {
+    customer_name: input.customerName.trim() || null,
+    rating: input.rating,
+    comment: input.comment.trim() || null,
+  }
+  // Only touch the timestamp if the day was actually changed.
+  if (input.keepTimeOf.slice(0, 10) !== input.date) {
+    patch.created_at = new Date(`${input.date}T12:00:00`).toISOString()
+  }
+  const { error } = await supabase.from('reviews').update(patch).eq('id', id)
+  if (error) throw error
+}
