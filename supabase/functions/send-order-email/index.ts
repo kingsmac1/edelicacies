@@ -339,6 +339,21 @@ Deno.serve(async (req) => {
       )
     }
 
+    // Orders that began in a WhatsApp chat also get the update there. The
+    // whatsapp function decides whether that applies, and does nothing until
+    // WhatsApp is connected. A failure must never break the email.
+    if (event === 'order_approved' || event === 'stage_change') {
+      try {
+        await fetch(`${SUPABASE_URL}/functions/v1/whatsapp`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'order_update', orderId, event }),
+        })
+      } catch (err) {
+        console.error('WhatsApp order update failed', err)
+      }
+    }
+
     return new Response(JSON.stringify({ ok: true }), { headers: CORS_HEADERS })
   } catch (err) {
     console.error(err)

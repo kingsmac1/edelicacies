@@ -165,3 +165,12 @@ export function IconMore(props: IconProps) {
     </svg>
   )
 }
+
+export function IconPhoneChat(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M4 20l1.2-3.7A8 8 0 1 1 8.2 19L4 20z" />
+      <path d="M9.2 9.4c.3 2 2.1 3.9 4.2 4.6l1.3-1.2 2 .9c0 1-.9 1.8-1.9 1.8-3.4 0-6.4-3-6.4-6.4 0-1 .8-1.8 1.8-1.8l.9 2-.9 1.1z" />
+    </Base>
+  )
+}

@@ -2,11 +2,10 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { Header } from './Header'
 import { Footer } from './Footer'
 import { AnnouncementBar } from './AnnouncementBar'
-import { WhatsAppFab } from './WhatsAppFab'
 import { ChatWidget } from './ChatWidget'
 
 // Pages with their own fixed bottom action bar hide the footer and the
-// WhatsApp FAB so nothing overlaps the bar.
+// chat button so nothing overlaps the bar.
 const FIXED_BOTTOM_BAR_ROUTES = new Set(['/cart', '/checkout'])
 
 export function PublicLayout() {
@@ -21,7 +20,6 @@ export function PublicLayout() {
         <Outlet />
       </main>
       {!hasFixedBottomBar && <Footer />}
-      {!hasFixedBottomBar && <WhatsAppFab />}
       {!hasFixedBottomBar && <ChatWidget />}
     </div>
   )

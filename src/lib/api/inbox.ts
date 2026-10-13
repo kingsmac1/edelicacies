@@ -12,6 +12,7 @@ export interface ConversationRow {
   last_role: string | null
   customer_name: string | null
   customer_contact: string | null
+  channel: 'web' | 'whatsapp'
 }
 
 export interface ThreadMessage {
@@ -26,7 +27,7 @@ export async function fetchConversations(): Promise<ConversationRow[]> {
   const { data, error } = await supabase
     .from('conversations')
     .select(
-      'id, created_at, last_message_at, mode, handoff_reason, handoff_at, owner_unread, last_preview, last_role, customer_name, customer_contact',
+      'id, created_at, last_message_at, mode, handoff_reason, handoff_at, owner_unread, last_preview, last_role, customer_name, customer_contact, channel',
     )
     .order('last_message_at', { ascending: false })
     .limit(100)
@@ -45,7 +46,32 @@ export async function fetchThread(conversationId: string): Promise<ThreadMessage
   return (data ?? []) as ThreadMessage[]
 }
 
-export async function sendOwnerReply(conversationId: string, content: string): Promise<void> {
+// A reply to a website visitor is saved in the database and they see it on
+// their next check. A reply to a WhatsApp customer must also be delivered
+// through WhatsApp, which only the "whatsapp" function can do.
+export async function sendOwnerReply(
+  conversationId: string,
+  content: string,
+  channel: 'web' | 'whatsapp' = 'web',
+): Promise<void> {
+  if (channel === 'whatsapp') {
+    const { error } = await supabase.functions.invoke('whatsapp', {
+      body: { action: 'owner_reply', conversationId, content },
+    })
+    if (error) {
+      let message = 'Could not send the WhatsApp reply.'
+      try {
+        const res = (error as { context?: Response }).context
+        const json = await res?.json()
+        if (json?.message) message = json.message
+        else if (json?.error) message = String(json.error)
+      } catch {
+        /* keep the generic message */
+      }
+      throw new Error(message)
+    }
+    return
+  }
   const { error } = await supabase.rpc('owner_send_message', {
     p_conversation_id: conversationId,
     p_content: content,

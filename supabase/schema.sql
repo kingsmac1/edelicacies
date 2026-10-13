@@ -1972,3 +1972,57 @@ select cron.schedule(
   '0 2 * * *',
   $$ delete from knowledge_gaps where expires_at < now(); $$
 );
+
+-- ============================================================================
+-- PHASE 6: WHATSAPP (the second door into the same assistant)
+-- ============================================================================
+-- Safe to run before WhatsApp is connected: it only adds columns and indexes.
+-- A conversation now has a channel: 'web' (the website chat box) or
+-- 'whatsapp' (a customer chatting on the Edelicacies WhatsApp number).
+
+alter table conversations add column if not exists channel text not null default 'web';
+alter table conversations drop constraint if exists conversations_channel_check;
+alter table conversations add constraint conversations_channel_check check (channel in ('web', 'whatsapp'));
+
+-- The customer's WhatsApp number, digits only with country code (2348012345678).
+alter table conversations add column if not exists wa_phone text;
+
+-- One WhatsApp conversation per customer number: when the same person writes
+-- again next week, the chat simply continues.
+create unique index if not exists conversations_wa_phone_idx
+  on conversations(wa_phone) where channel = 'whatsapp';
+
+-- Meta's id for a message. Meta sometimes delivers the same message twice;
+-- this unique index makes the second copy harmless, so nobody is answered twice.
+alter table chat_messages add column if not exists wa_message_id text;
+create unique index if not exists chat_messages_wamid_idx
+  on chat_messages(wa_message_id) where wa_message_id is not null;
+
+-- Which chat an order came from, so "order approved" can go back to that chat.
+alter table orders add column if not exists conversation_id uuid references conversations(id) on delete set null;
+create index if not exists orders_conversation_idx on orders(conversation_id) where conversation_id is not null;
+
+-- WhatsApp settings the owner edits in Dashboard -> WhatsApp. NOT secret keys
+-- (the access token, app secret and verify token stay in Supabase Secrets),
+-- but the owner's personal number should not be public either, so this table
+-- is owner-only. The whatsapp function reads it with the service key.
+create table if not exists whatsapp_config (
+  id boolean primary key default true check (id), -- exactly one row
+  phone_number_id text,
+  owner_alert_number text,
+  template_order_confirmed text not null default 'order_confirmed',
+  template_owner_alert text not null default 'owner_chat_alert',
+  template_language text not null default 'en',
+  updated_at timestamptz not null default now()
+);
+insert into whatsapp_config (id) values (true) on conflict (id) do nothing;
+
+alter table whatsapp_config enable row level security;
+drop policy if exists "whatsapp_config owner all" on whatsapp_config;
+create policy "whatsapp_config owner all"
+  on whatsapp_config for all to authenticated using (is_owner()) with check (is_owner());
+
+-- WhatsApp assistant on/off. Off: customer messages still arrive in the
+-- Inbox for the owner, but the assistant does not answer them. Everything
+-- else (website chat, order updates, owner replies) is unchanged.
+alter table whatsapp_config add column if not exists assistant_enabled boolean not null default true;

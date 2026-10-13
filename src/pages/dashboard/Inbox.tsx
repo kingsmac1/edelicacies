@@ -24,6 +24,14 @@ function timeLabel(iso: string): string {
     : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
+function chatLabel(c: ConversationRow): string {
+  return c.channel === 'whatsapp' ? (c.customer_contact ?? 'WhatsApp customer') : 'Website visitor'
+}
+
+// WhatsApp only delivers free-form messages for 24 hours after the customer
+// last wrote.
+const WINDOW_MS = 24 * 60 * 60 * 1000
+
 export function OwnerInbox() {
   const [params, setParams] = useSearchParams()
   const selectedId = params.get('c')
@@ -140,11 +148,12 @@ export function OwnerInbox() {
     if (!text || !selectedId || busy) return
     setBusy(true)
     try {
-      await sendOwnerReply(selectedId, text)
+      await sendOwnerReply(selectedId, text, selected?.channel ?? 'web')
       setDraft('')
+      setError(null)
       await Promise.all([loadThread(selectedId), loadList()])
-    } catch {
-      setError('Could not send your reply. Please try again.')
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : 'Could not send your reply. Please try again.')
     } finally {
       setBusy(false)
     }
@@ -153,13 +162,15 @@ export function OwnerInbox() {
   const visible = conversations.filter((c) =>
     filter === 'all' ? true : filter === 'needs' ? c.mode === 'owner' || c.owner_unread : c.mode === 'ai',
   )
+  const lastCustomerMsg = [...thread].reverse().find((m) => m.role === 'user')
+  const windowClosed = !lastCustomerMsg || Date.now() - new Date(lastCustomerMsg.created_at).getTime() > WINDOW_MS
   const needsCount = conversations.filter((c) => c.mode === 'owner' || c.owner_unread).length
 
   return (
     <div>
       <h1 className="text-xl font-semibold text-ink-800">Inbox</h1>
       <p className="mt-1 text-[14px] text-ink-400">
-        Live chats from the website. Take over any chat and the assistant goes quiet until you hand it back.
+        Live chats from the website and WhatsApp. Take over any chat and the assistant goes quiet until you hand it back.
       </p>
       {error && <p className="mt-3 text-[14px] font-medium text-brand-600">{error}</p>}
 
@@ -215,7 +226,7 @@ export function OwnerInbox() {
                   <div className="flex items-center justify-between gap-2">
                     <p className="flex min-w-0 items-center gap-2 text-[14px] font-semibold text-ink-800">
                       {c.owner_unread && <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand-500" />}
-                      <span className="truncate">{c.customer_name ?? 'Website visitor'}</span>
+                      <span className="truncate">{c.customer_name ?? chatLabel(c)}</span>
                     </p>
                     <span className="shrink-0 text-[11px] text-ink-400">{timeLabel(c.last_message_at)}</span>
                   </div>
@@ -228,6 +239,11 @@ export function OwnerInbox() {
                     >
                       {c.mode === 'owner' ? 'You' : 'Assistant'}
                     </span>
+                    {c.channel === 'whatsapp' && (
+                      <span className="rounded-full bg-[#25D366]/15 px-2 py-0.5 text-[11px] font-semibold text-[#128C7E]">
+                        WhatsApp
+                      </span>
+                    )}
                     {c.mode === 'owner' && c.handoff_reason && (
                       <span className="truncate text-[11px] text-ink-400">{c.handoff_reason}</span>
                     )}
@@ -255,7 +271,7 @@ export function OwnerInbox() {
                     ← All chats
                   </button>
                   <p className="truncate text-[15px] font-semibold text-ink-800">
-                    {selected.customer_name ?? 'Website visitor'}
+                    {selected.customer_name ?? chatLabel(selected)}
                   </p>
                   {selected.customer_contact && (
                     <p className="truncate text-[12px] text-ink-400">{selected.customer_contact}</p>
@@ -290,6 +306,13 @@ export function OwnerInbox() {
                   ? 'You are in control. The assistant will not reply to this customer.'
                   : 'The assistant is answering this chat. Take over, or just send a reply to join in.'}
               </div>
+
+              {selected.channel === 'whatsapp' && windowClosed && (
+                <div className="bg-amber-50 px-4 py-2 text-[12px] font-medium text-amber-800">
+                  This customer last wrote more than 24 hours ago, so WhatsApp will not deliver a reply typed here. Reply
+                  from your WhatsApp Business app, or wait for them to write again.
+                </div>
+              )}
 
               <div className="flex-1 space-y-2 overflow-y-auto bg-cream-50 p-4">
                 {thread.map((m) =>

@@ -1,7 +1,7 @@
 # PROGRESS — Edelicacies Menu Assistant
 
 ## Current position
-- **Phase:** 5 (Safe for real customers): spending cap, usage log, rate limits, AI Monitor built. Next: OpenRouter key limit, 20-question test suite, quiz
+- **Phase:** 6 (WhatsApp), PAUSED at the Meta/number step by Macauley (2026-10-13). All OUR code is built and tested, dormant until the WhatsApp number + keys exist. Phase 5 was completed (20/20 tests).
 - **Current item:** Phase 4 not formally started. Done inside Phase 4 scope: tools `send_enquiry` and `place_order`, owner approval flow, owner alert emails. Takeover inbox + automatic handoff + owner alert emails are built (need SQL + chat redeploy + site deploy). Done-when live test PASSED 2026-10-13. Still to do: Phase 4 Learn quiz, MCP bonus
 
 ## Checklist
@@ -61,15 +61,16 @@
 - [~] Learn: RLS · prompt injection · observability (quiz 2026-10-13: Q1 confused RLS with prompt injection, re-explained; Q2 half right (least power); Q3 right)
 
 ### Phase 6: WhatsApp and owner takeover from the phone
-- [ ] Pre-checks (Business app version, Coexistence for +234, current pricing)
-- [ ] Meta Business account, verification, developer app
-- [ ] Connect number via Coexistence
-- [ ] Secrets saved
-- [ ] Webhook Edge Function
-- [ ] Owner takeover from phone
-- [ ] WhatsApp chats in dashboard inbox
-- [ ] Owner alert on WhatsApp
-- [ ] 24-hour rule + "order confirmed" template
+- [x] Pre-checks: Business app >= 2.24.17; Coexistence for +234 UNCONFIRMED (Meta page silent, blogs disagree; only a real connection attempt will tell); pricing per message, no confirmed free monthly tier
+- [ ] Meta Business account, verification, developer app (WAITING: number not ready)
+- [ ] Connect number via Coexistence (WAITING)
+- [x] Secrets list defined (code reads them; Dashboard -> WhatsApp shows which are saved)
+- [x] Webhook Edge Function `whatsapp` built + tested on stubs (39/39)
+- [x] Owner takeover from phone (echo handling built; needs live proof)
+- [x] WhatsApp chats in dashboard inbox (WhatsApp badge, reply delivered via API, 24h notice)
+- [x] Owner alert on WhatsApp (template `owner_chat_alert`; needs OWNER_ALERT_WHATSAPP + approved template)
+- [x] 24-hour rule + "order confirmed" template (`order_confirmed`; needs Meta approval)
+- [ ] Live proof of the Done-when test (needs the real number)
 - [ ] Learn: webhooks · Coexistence · 24h window · why AI pauses
 
 ### Phase 7: Owner assistant on WhatsApp
@@ -158,6 +159,7 @@
   14. BUILT (2026-10-13): 20-question assistant test suite: `tests/assistant/questions.mjs` + runner `npm run test:assistant [ids]`; rules verified to pass a good answer and catch a bad one; report in tests/assistant/last-report.md (gitignored). Visitor limits now configurable via setting `chat_limits` (raise for test day: 40 / 60, then restore 8 / 30). WAITING: Macauley to deploy chat fn, raise chat_limits, then run suite; then fix failures and quiz.
   15. RESULT (2026-10-13): assistant test suite 20/20. Lesson: a failing test can be a bad test; read every failure. Minor wording notes for later: bot says "listed above" (hints at a prompt); a fake 'refund me for an order I never placed' is handed to the owner as a complaint (acceptable). TO DO: restore `chat_limits` to 8/30 after test day; add Macauley's own tricky questions as #21+; Phase 5 Learn quiz; confirm AI Monitor shows yesterday's numbers tomorrow.
   16. BUILT + TESTED (2026-10-13): (a) Inbox: "Delete chat" + "Delete chats older than 30 days" (messages go with the chat; gaps and cost log survive). (b) `knowledge_gaps` table: "Questions it couldn't answer" now saved for 14 days (was recomputed per tab, so it vanished when the range tab changed), grouped with counts, buttons "I added a note" / Delete / Clear all, nightly pg_cron clean-up of expired rows, one-time catch-up from existing chats (never resurrects deleted rows). Tests: gaps/DB 16/16, function 16/16 + 29/29, security 26/26 + 24/24 + 25/25.
+  17. BUILT + TESTED ON STUBS (2026-10-13): PHASE 6 CODE, dormant until Meta keys exist. New function `whatsapp` (Verify JWT OFF; protects itself): GET = Meta verify token; POST with x-hub-signature-256 = Meta webhook (HMAC with app secret, answers 200 fast, works in EdgeRuntime.waitUntil); service key = notify_owner / order_update; owner JWT = owner_reply / status. It only carries messages; the brain stays in `chat` (new service-key-only action `channel_message`, same rules, handoff, takeover, caps; WhatsApp-specific prompt note + hand-off wording; photos/voice notes handed to owner). Echo (`smb_message_echoes`) = owner typed in Business app -> chat to Owner mode. Dedupe: unique `chat_messages.wa_message_id`. Own replies store Meta's id so an echo is never mistaken for the owner. Order approval/status goes to the WhatsApp chat the order came from (`orders.conversation_id`), once per stage; outside 24h only the approval goes, as template `order_confirmed`. send-order-email calls it after approved/stage_change. Schema: conversations.channel/wa_phone, chat_messages.wa_message_id, orders.conversation_id. Site: floating WhatsApp icon removed (WhatsAppFab deleted), chat bubble now bottom-right with "Prefer to chat?" label. Dashboard: WhatsApp page (status ticks, webhook URL, template text). DECISION (option A, 2026-10-13): secret keys stay in Supabase Secrets (WHATSAPP_ACCESS_TOKEN, WHATSAPP_VERIFY_TOKEN, WHATSAPP_APP_SECRET); non-secret details (phone number ID, owner alert number, template names, language) are edited in Dashboard -> WhatsApp and stored in owner-only table `whatsapp_config` (dashboard value wins, old Secret names are fallback). PAUSE SWITCH (Dashboard -> WhatsApp, column whatsapp_config.assistant_enabled): paused = WhatsApp customer messages are saved + flagged unread for the owner, assistant not called, nothing sent back; mode untouched; website chat and everything else unchanged. Tests 48/48. NOT TESTED: owner_reply happy path with a real owner JWT, anything against real Meta. FINDING: `settings` is publicly readable, and it holds `owner_email` (fix later: move to a private table).
   PHASE 5 STATE when Macauley asked to move on: 20/20 tests, rate limits, cap, AI Monitor, RLS done. Carry-overs: re-ask Q1 (RLS = database lock, not chat tricks), restore `chat_limits` to 8/30, check AI Monitor "Yesterday" tomorrow, add own tests #21+.
 - New Supabase objects 2026-10-12: tables `email_campaigns`; column `customers.unsubscribed`; fns `unsubscribe_customer`, `submit_public_review`; bucket `email-images`; setting `email_daily_limit`; Edge fn `send-broadcast`.
 - Embedding model chosen: Supabase built-in `gte-small` (384 dims, English only, free, no OpenRouter quota). `faqs.embedding vector(384)`; trigger clears it when question/answer edited; `embed-faqs` function rebuilds NULL ones. Reason: free OpenRouter models share a 50 req/day limit.

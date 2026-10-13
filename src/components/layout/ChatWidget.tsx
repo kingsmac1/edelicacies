@@ -160,7 +160,7 @@ export function ChatWidget() {
   return (
     <>
       {open && (
-        <div className="fixed bottom-40 right-4 z-50 flex h-[28rem] max-h-[calc(100vh-11rem)] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-black/25 ring-1 ring-black/10">
+        <div className="fixed bottom-24 right-4 z-50 flex h-[28rem] max-h-[calc(100vh-7rem)] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-black/25 ring-1 ring-black/10">
           <div className="flex items-center justify-between bg-ink-900 px-4 py-3 text-white">
             <div>
               <p className="font-display text-base font-semibold">
@@ -288,11 +288,22 @@ export function ChatWidget() {
         </div>
       )}
 
+      {!open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          tabIndex={-1}
+          aria-hidden="true"
+          className="fixed bottom-[26px] right-[76px] z-40 rounded-full bg-white px-3.5 py-2 text-[13px] font-semibold text-ink-800 shadow-lg shadow-black/15 ring-1 ring-black/5 active:scale-95"
+        >
+          Prefer to chat?
+        </button>
+      )}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label={open ? 'Close chat' : 'Open chat assistant'}
-        className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-brand-500 text-white shadow-lg shadow-black/20 active:scale-95"
+        className="fixed bottom-5 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-brand-500 text-white shadow-lg shadow-black/20 active:scale-95"
       >
         <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M4 3h16a2 2 0 012 2v11a2 2 0 01-2 2H8l-4.5 4a.5.5 0 01-.83-.37V5a2 2 0 011.33-2z" />

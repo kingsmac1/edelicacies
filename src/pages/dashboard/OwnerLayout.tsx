@@ -21,6 +21,7 @@ import {
   IconSend,
   IconSliders,
   IconMore,
+  IconPhoneChat,
 } from '../../components/dashboard/icons'
 
 interface NavItem {
@@ -40,6 +41,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard/subscribers', label: 'Subscribers', icon: IconBell },
   { to: '/dashboard/inbox', label: 'Inbox', icon: IconChat },
   { to: '/dashboard/ai-monitor', label: 'AI Monitor', icon: IconBarChart },
+  { to: '/dashboard/whatsapp', label: 'WhatsApp', icon: IconPhoneChat },
   { to: '/dashboard/enquiries', label: 'Enquiries', icon: IconInbox },
   { to: '/dashboard/messaging', label: 'Messaging', icon: IconSend },
   { to: '/dashboard/email-templates', label: 'Email Templates', icon: IconMail },
