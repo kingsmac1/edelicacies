@@ -339,7 +339,10 @@ async function emailOwner(enquiry: { name: string; contact: string; question: st
 }
 
 // Runs the send_enquiry tool. Returns text the AI reads, so it knows what happened.
-async function runSendEnquiry(rawArgs: string, conversation: ChatMessage[]): Promise<{ result: string; saved: boolean }> {
+async function runSendEnquiry(
+  rawArgs: string,
+  conversation: ChatMessage[],
+): Promise<{ result: string; saved: boolean; name?: string; contact?: string }> {
   let args: { name?: unknown; contact?: unknown; question?: unknown }
   try {
     args = JSON.parse(rawArgs || '{}')
@@ -380,20 +383,27 @@ async function runSendEnquiry(rawArgs: string, conversation: ChatMessage[]): Pro
 
   // The owner email must never undo a saved enquiry.
   await emailOwner({ name, contact, question }).catch((err) => console.error('owner email failed', err))
-  return { result: 'Success: the enquiry was sent to the team.', saved: true }
+  return { result: 'Success: the enquiry was sent to the team.', saved: true, name, contact }
 }
 
 type OrderOutcome = {
   result: string
   orderNumber: string | null
   customerName: string | null
+  contact: string | null
   trackUrl: string | null
 }
 
 // Runs the place_order tool. Every value is checked here in code; the AI's
 // word is never trusted for prices, items or contact details.
 async function runPlaceOrder(rawArgs: string, catalog: Catalog): Promise<OrderOutcome> {
-  const fail = (result: string): OrderOutcome => ({ result, orderNumber: null, customerName: null, trackUrl: null })
+  const fail = (result: string): OrderOutcome => ({
+    result,
+    orderNumber: null,
+    customerName: null,
+    contact: null,
+    trackUrl: null,
+  })
 
   // deno-lint-ignore no-explicit-any
   let a: any
@@ -493,11 +503,17 @@ async function runPlaceOrder(rawArgs: string, catalog: Catalog): Promise<OrderOu
       (email ? ` A confirmation with a tracking link was emailed to ${email}.` : ' No email was given, so no email was sent.'),
     orderNumber: placed.order_number,
     customerName: name,
+    contact: email || phoneRaw,
     trackUrl: SITE_URL
       ? `${SITE_URL}/track?order=${encodeURIComponent(placed.order_number)}&phone=${encodeURIComponent(phoneRaw)}`
       : null,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Rules that decide WHEN the assistant must step aside for a person.
+// These run in code, not in the AI, so they are predictable and testable.
+// ---------------------------------------------------------------------------
 
 // Replies that admit "I don't know", or customers asking for a person, get a
 // WhatsApp button with their question already typed in.
@@ -505,9 +521,45 @@ const UNSURE_RE =
   /(not sure|don'?t have|do not have|can'?t confirm|cannot confirm|unable to|team will|team can|message us|whatsapp)/i
 const WANTS_PERSON_RE = /\b(human|person|owner|admin|manager|agent|someone|speak to|talk to|call me)\b/i
 
+// A bot reply that clearly admits it does not know (stricter: used to count
+// "I'm not sure" twice in a row before handing the chat to a person).
+const NOT_SURE_STRICT_RE = /(not sure|don'?t have|do not have|can'?t confirm|cannot confirm|unable to)/i
+
+// The customer clearly wants a real person.
+const ASKS_FOR_PERSON_RE =
+  /\b((speak|talk|chat|connect|put me)\s+(me\s+)?(to|with|through to)\s+(a|an|the|your|someone|somebody)?\s*(human|person|someone|somebody|owner|manager|agent|staff|team|admin|representative|real)|(real|actual)\s+(person|human)|customer\s+(care|service)|call\s+me|human\s+(please|agent|being))\b|^\s*human\s*[.!?]*\s*$/i
+
+// The customer sounds upset, or reports a problem with an order they received.
+// Written to avoid catching policy questions like "do you give refunds?".
+const COMPLAINT_RE =
+  /(not happy|unhappy|disappointed|disgusted|angry|furious|upset|fed up|unacceptable|ridiculous|rubbish|nonsense|terrible|horrible|awful|worst|scam|fraud|cheated|thief|stole|money back|refund me|my refund|want a refund|never (came|arrived|received|got)|did ?n'?o?t (arrive|come|deliver|receive|get)|not (yet )?delivered|still waiting|where is my (food|order)|my (food|order|rice|soup|meal|drink|package)\s+(was|is|came|arrived|has|had)\s+(\w+\s+)?(cold|late|wrong|spoilt|spoiled|bad|stale|raw|missing|incomplete|rotten)|food poisoning|got sick|made me sick|wrong order|order is wrong)/i
+
+// "What if my food is spoilt?" is a question about our policy, not a live
+// complaint. Hypothetical questions are not handed to a person.
+const HYPOTHETICAL_RE = /\b(what if|what happens (if|when)|in case|suppose|supposing|if (my|i|the|it|there|someone))\b/i
+
+// Large or unusual requests that a person should handle.
+const BIG_ORDER_RE =
+  /\b(cater(ing)?|bulk|wedding|burial|funeral|party|corporate|conference|event|ceremony|\d{2,}\s*(people|persons|guests|plates|packs|portions|pieces|bottles)|hundred\s+(people|guests|plates))\b/i
+
+const HANDOFF_TEXT = {
+  person:
+    "Of course! I've asked a member of our team to take over this chat. They'll reply here shortly. You can also message us directly on WhatsApp.",
+  complaint:
+    "I'm really sorry about that. I've asked a member of our team to look into this personally, and they'll reply here shortly. You can also reach us directly on WhatsApp.",
+  big_order:
+    "Thank you for thinking of us for this! Larger orders are handled personally by our team, so I've asked someone to take over and talk it through with you here shortly.",
+  unsure:
+    "\n\nI've asked a member of our team to take over this chat, and they'll reply here shortly.",
+} as const
+
 // Safety limits so one visitor can't send a giant conversation (= big cost).
 const MAX_MESSAGES = 20
 const MAX_CHARS_PER_MESSAGE = 1000
+const OWNER_TIMEOUT_HOURS = 3 // if the owner goes quiet this long, the assistant resumes
+const MAX_USER_MESSAGES_PER_HOUR = 40 // per conversation
+const MAX_NEW_CONVERSATIONS_PER_HOUR = 60 // across all visitors
+const OWNER_ALERT_GAP_MINUTES = 10 // at most one "customer replied" email per chat per this long
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -523,29 +575,500 @@ function json(body: unknown, status = 200): Response {
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
-Deno.serve(async (req) => {
-  // Browsers send a "preflight" OPTIONS request first, asking permission.
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
-  if (req.method !== 'POST') return json({ error: 'Use POST.' }, 405)
+// ---------------------------------------------------------------------------
+// Conversations (saved chats)
+// ---------------------------------------------------------------------------
 
-  if (!OPENROUTER_API_KEY) {
-    return json({ error: 'The assistant is not set up yet (missing key).' }, 500)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+type Conversation = {
+  id: string
+  access_token: string
+  mode: 'ai' | 'owner'
+  handoff_at: string | null
+  last_owner_message_at: string | null
+  owner_alerted_at: string | null
+  customer_name: string | null
+}
+
+type StoredMessage = {
+  id: number
+  role: 'user' | 'assistant' | 'owner' | 'system'
+  content: string
+  meta: Record<string, unknown> | null
+  created_at: string
+}
+
+const publicMessage = (m: StoredMessage) => ({
+  id: m.id,
+  role: m.role,
+  content: m.content,
+  meta: m.meta,
+  created_at: m.created_at,
+})
+
+// Only the browser that started a chat knows its secret token.
+async function findConversation(id: unknown, token: unknown): Promise<Conversation | null> {
+  if (typeof id !== 'string' || typeof token !== 'string') return null
+  if (!UUID_RE.test(id) || !UUID_RE.test(token)) return null
+  const { data } = await admin
+    .from('conversations')
+    .select('id, access_token, mode, handoff_at, last_owner_message_at, owner_alerted_at, customer_name')
+    .eq('id', id)
+    .eq('access_token', token)
+    .maybeSingle()
+  return (data as Conversation | null) ?? null
+}
+
+async function createConversation(): Promise<Conversation | null> {
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const { count } = await admin
+    .from('conversations')
+    .select('id', { count: 'exact', head: true })
+    .gte('created_at', since)
+  if ((count ?? 0) >= MAX_NEW_CONVERSATIONS_PER_HOUR) return null
+  const { data, error } = await admin
+    .from('conversations')
+    .insert({})
+    .select('id, access_token, mode, handoff_at, last_owner_message_at, owner_alerted_at, customer_name')
+    .single()
+  if (error) {
+    console.error('could not create conversation', error)
+    return null
+  }
+  return data as Conversation
+}
+
+async function addMessage(
+  conversationId: string,
+  role: StoredMessage['role'],
+  content: string,
+  meta: Record<string, unknown> | null = null,
+): Promise<StoredMessage> {
+  const { data, error } = await admin
+    .from('chat_messages')
+    .insert({ conversation_id: conversationId, role, content, meta })
+    .select('id, role, content, meta, created_at')
+    .single()
+  if (error || !data) throw error ?? new Error('could not save message')
+  return data as StoredMessage
+}
+
+async function touchConversation(id: string, patch: Record<string, unknown>): Promise<void> {
+  const { error } = await admin.from('conversations').update({ updated_at: new Date().toISOString(), ...patch }).eq('id', id)
+  if (error) console.error('could not update conversation', error)
+}
+
+async function loadMessages(conversationId: string, afterId: number): Promise<StoredMessage[]> {
+  const { data, error } = await admin
+    .from('chat_messages')
+    .select('id, role, content, meta, created_at')
+    .eq('conversation_id', conversationId)
+    .gt('id', afterId)
+    .order('id', { ascending: true })
+    .limit(200)
+  if (error) throw error
+  return (data ?? []) as StoredMessage[]
+}
+
+// What the AI sees: the saved conversation (not whatever the browser claims),
+// with team replies labelled so the AI knows a person already answered.
+async function loadAiHistory(conversationId: string): Promise<ChatMessage[]> {
+  const { data, error } = await admin
+    .from('chat_messages')
+    .select('role, content')
+    .eq('conversation_id', conversationId)
+    .order('id', { ascending: false })
+    .limit(MAX_MESSAGES)
+  if (error) throw error
+  return ((data ?? []) as { role: StoredMessage['role']; content: string }[])
+    .reverse()
+    .filter((m) => m.role !== 'system')
+    .map((m) =>
+      m.role === 'user'
+        ? { role: 'user' as const, content: m.content }
+        : { role: 'assistant' as const, content: m.role === 'owner' ? `(Message from the Edelicacies team) ${m.content}` : m.content },
+    )
+}
+
+async function sendOwnerEmail(subject: string, html: string): Promise<void> {
+  if (!RESEND_API_KEY) return
+  const { data: setting } = await admin.from('settings').select('value').eq('key', 'owner_email').maybeSingle()
+  const to = setting?.value?.email
+  if (!to) return
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: FROM_EMAIL, to, subject, html }),
+  })
+  if (!res.ok) console.error('owner alert email failed', res.status, await res.text())
+}
+
+function alertHtml(title: string, lines: string[], conversationId: string): string {
+  const link = SITE_URL
+    ? `<p><a href="${SITE_URL}/dashboard/inbox?c=${conversationId}" style="color:#ff002c;font-weight:600;">Open the chat in your inbox</a></p>`
+    : '<p>Open Dashboard &rarr; Inbox to reply.</p>'
+  return `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:480px;line-height:1.5;color:#121216;">
+    <h2 style="margin:0 0 12px;">${esc(title)}</h2>
+    ${lines.map((l) => `<p style="margin:0 0 8px;">${l}</p>`).join('')}
+    ${link}
+  </div>`
+}
+
+// Switches a chat to "owner" mode and tells you. The assistant will not answer
+// this conversation again until you hand it back (or you go quiet for a while).
+async function handOffToOwner(
+  conv: Conversation,
+  reason: string,
+  customerSaid: string,
+): Promise<void> {
+  await touchConversation(conv.id, {
+    mode: 'owner',
+    handoff_reason: reason,
+    handoff_at: new Date().toISOString(),
+    owner_unread: true,
+    owner_alerted_at: new Date().toISOString(),
+  })
+  await sendOwnerEmail(
+    `Customer chat needs you: ${reason}`,
+    alertHtml(
+      'A customer chat needs a person',
+      [
+        `<strong>Why:</strong> ${esc(reason)}`,
+        `<strong>Customer said:</strong> "${esc(customerSaid.slice(0, 300))}"`,
+        'The assistant has stepped aside and will stay quiet until you hand the chat back.',
+      ],
+      conv.id,
+    ),
+  ).catch((err) => console.error('handoff alert failed', err))
+}
+
+// ---------------------------------------------------------------------------
+// The assistant itself (menu + notes + tools), given a conversation history
+// ---------------------------------------------------------------------------
+
+type AssistantResult = {
+  reply: string
+  modelUsed: string | null
+  usage: unknown
+  enquirySaved: boolean
+  orderNumber: string | null
+  trackUrl: string | null
+  customerName: string | null
+  customerContact: string | null
+  orderCustomer: string | null
+  faqMatches: FaqMatch[]
+}
+
+async function runAssistant(history: ChatMessage[]): Promise<AssistantResult | { error: string }> {
+  const lastQuestion = history[history.length - 1].content
+  // The notes search uses the last two things the customer said, so a
+  // follow-up like "and for pickup?" still carries the topic.
+  const searchText = history
+    .filter((m) => m.role === 'user')
+    .slice(-2)
+    .map((m) => m.content)
+    .join(' ')
+
+  let faqMatches: FaqMatch[] = []
+  const catalog: Catalog = new Map()
+  const [menuText] = await Promise.all([
+    loadMenuText(catalog),
+    findFaqNotes(searchText)
+      .then((m) => {
+        faqMatches = m
+      })
+      .catch((err) => console.error('could not search business notes', err)),
+  ])
+
+  // deno-lint-ignore no-explicit-any
+  const convo: any[] = [
+    { role: 'system', content: buildSystemPrompt(menuText, formatFaqNotes(faqMatches)) },
+    ...history,
+  ]
+
+  let reply = ''
+  let modelUsed: string | null = null
+  let usage: unknown = null
+  let enquirySaved = false
+  let orderNumber: string | null = null
+  let orderCustomer: string | null = null
+  let trackUrl: string | null = null
+  let customerName: string | null = null
+  let customerContact: string | null = null
+
+  // Up to 3 rounds: the AI may ask for a tool, we run it, then it writes its
+  // final answer. After the second round we stop offering tools.
+  for (let round = 0; round < 3; round++) {
+    const aiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        models: MODELS,
+        temperature: TEMPERATURE,
+        messages: convo,
+        ...(round < 2 ? { tools: TOOLS, tool_choice: 'auto', provider: { require_parameters: true } } : {}),
+      }),
+    })
+
+    const data = await aiResponse.json()
+    if (!aiResponse.ok) {
+      console.error('OpenRouter error', aiResponse.status, JSON.stringify(data))
+      return { error: 'The assistant is busy right now. Please try again.' }
+    }
+
+    modelUsed = data.model ?? modelUsed
+    usage = data.usage ?? usage
+    const message = data?.choices?.[0]?.message
+    const calls = message?.tool_calls
+
+    if (Array.isArray(calls) && calls.length > 0 && round < 2) {
+      convo.push({ role: 'assistant', content: message.content ?? '', tool_calls: calls })
+      for (const call of calls) {
+        let result = 'Error: unknown tool.'
+        if (call?.function?.name === 'send_enquiry') {
+          const outcome = await runSendEnquiry(call.function.arguments ?? '{}', history)
+          result = outcome.result
+          if (outcome.saved) {
+            enquirySaved = true
+            customerName = outcome.name ?? customerName
+            customerContact = outcome.contact ?? customerContact
+          }
+        } else if (call?.function?.name === 'place_order') {
+          if (orderNumber) {
+            result = `Error: order ${orderNumber} was already placed. Do not place another.`
+          } else {
+            const outcome = await runPlaceOrder(call.function.arguments ?? '{}', catalog)
+            result = outcome.result
+            orderNumber = outcome.orderNumber
+            orderCustomer = outcome.customerName
+            trackUrl = outcome.trackUrl
+            customerName = outcome.customerName ?? customerName
+            customerContact = outcome.contact ?? customerContact
+          }
+        }
+        convo.push({ role: 'tool', tool_call_id: call.id, content: result })
+      }
+      continue
+    }
+
+    reply = String(message?.content ?? '').trim()
+    break
   }
 
-  let incoming: unknown
-  try {
-    incoming = (await req.json()).messages
-  } catch {
-    return json({ error: 'Invalid request.' }, 400)
+  if (!reply && enquirySaved) {
+    reply = 'Thank you. Your question has been sent to the team, and they will reply on the contact you gave.'
+  }
+  if (!reply && orderNumber) {
+    reply =
+      `Thank you! Your order ${orderNumber} has been received and is waiting for our team's approval. ` +
+      'We will send you the payment details on WhatsApp.'
+  }
+  if (!reply) return { error: 'The assistant sent an empty reply.' }
+
+  void lastQuestion
+  return {
+    reply,
+    modelUsed,
+    usage,
+    enquirySaved,
+    orderNumber,
+    trackUrl,
+    customerName,
+    customerContact,
+    orderCustomer,
+    faqMatches,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Request handlers
+// ---------------------------------------------------------------------------
+
+// The customer's browser asks "anything new in my chat?" (also used to reload
+// a chat after a page refresh, with after = 0).
+async function handlePoll(body: Record<string, unknown>): Promise<Response> {
+  const conv = await findConversation(body.conversationId, body.accessToken)
+  if (!conv) return json({ error: 'Conversation not found.' }, 404)
+  const after = Number.isFinite(Number(body.after)) ? Number(body.after) : 0
+  const messages = await loadMessages(conv.id, after)
+  return json({ mode: conv.mode, messages: messages.map(publicMessage) })
+}
+
+async function handleSend(body: Record<string, unknown>): Promise<Response> {
+  const text = String(body.message ?? '').trim().slice(0, MAX_CHARS_PER_MESSAGE)
+  if (!text) return json({ error: 'Please type a message.' }, 400)
+
+  // Find (or start) the saved conversation.
+  let conv: Conversation | null = null
+  let isNew = false
+  if (body.conversationId) {
+    conv = await findConversation(body.conversationId, body.accessToken)
+    if (!conv) return json({ error: 'Conversation not found.' }, 404)
+  } else {
+    conv = await createConversation()
+    if (!conv) return json({ error: 'We are very busy right now. Please try again in a few minutes.' }, 429)
+    isNew = true
   }
 
-  if (!Array.isArray(incoming) || incoming.length === 0) {
-    return json({ error: 'No messages provided.' }, 400)
+  // Per-conversation flood guard.
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const { count: recentUserMessages } = await admin
+    .from('chat_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversation_id', conv.id)
+    .eq('role', 'user')
+    .gte('created_at', hourAgo)
+  if ((recentUserMessages ?? 0) >= MAX_USER_MESSAGES_PER_HOUR) {
+    return json({ error: "You're sending messages very quickly. Please wait a little and try again." }, 429)
   }
 
-  // Keep only well-formed user/assistant messages, trimmed and length-capped.
-  // The "system" role is deliberately NOT accepted from the browser — only we
-  // decide the rules, so a visitor can't rewrite them.
+  const userMsg = await addMessage(conv.id, 'user', text)
+  const outMessages: StoredMessage[] = [userMsg]
+  await touchConversation(conv.id, {
+    last_message_at: userMsg.created_at,
+    last_preview: text.slice(0, 140),
+    last_role: 'user',
+  })
+
+  const respond = (extra: Record<string, unknown> = {}) =>
+    json({
+      conversationId: conv!.id,
+      ...(isNew ? { accessToken: conv!.access_token } : {}),
+      mode: conv!.mode,
+      messages: outMessages.map(publicMessage),
+      ...extra,
+    })
+
+  // The owner has been silent too long: the assistant resumes so the customer
+  // is never left waiting forever.
+  if (conv.mode === 'owner') {
+    const since = conv.last_owner_message_at ?? conv.handoff_at
+    if (since && Date.now() - new Date(since).getTime() > OWNER_TIMEOUT_HOURS * 60 * 60 * 1000) {
+      const note = await addMessage(
+        conv.id,
+        'system',
+        'Our team has not been able to reply yet, so the assistant is back to help you.',
+      )
+      outMessages.push(note)
+      await touchConversation(conv.id, { mode: 'ai', handoff_reason: null, handoff_at: null, owner_unread: false })
+      conv.mode = 'ai'
+    }
+  }
+
+  // ---- OWNER MODE: the assistant is never called. ----
+  if (conv.mode === 'owner') {
+    const shouldAlert =
+      !conv.owner_alerted_at ||
+      Date.now() - new Date(conv.owner_alerted_at).getTime() > OWNER_ALERT_GAP_MINUTES * 60 * 1000
+    await touchConversation(conv.id, {
+      owner_unread: true,
+      ...(shouldAlert ? { owner_alerted_at: new Date().toISOString() } : {}),
+    })
+    if (shouldAlert) {
+      await sendOwnerEmail(
+        'Customer replied in a chat you took over',
+        alertHtml('A customer replied', [`"${esc(text.slice(0, 300))}"`], conv.id),
+      ).catch((err) => console.error('reply alert failed', err))
+    }
+    return respond()
+  }
+
+  // ---- AI MODE ----
+  // Rules that hand the chat to a person BEFORE the assistant answers.
+  const earlyReason = ASKS_FOR_PERSON_RE.test(text)
+    ? ({ key: 'person', reason: 'Customer asked for a person' } as const)
+    : COMPLAINT_RE.test(text) && !(HYPOTHETICAL_RE.test(text) && text.includes('?'))
+      ? ({ key: 'complaint', reason: 'Customer sounds upset or reports a problem' } as const)
+      : BIG_ORDER_RE.test(text)
+        ? ({ key: 'big_order', reason: 'Large or catering request' } as const)
+        : null
+
+  if (earlyReason) {
+    const reply = HANDOFF_TEXT[earlyReason.key]
+    const assistantMsg = await addMessage(conv.id, 'assistant', reply, {
+      whatsappUrl: whatsappLink(`Hi Edelicacies, I need help: ${text.slice(0, 300)}`),
+    })
+    outMessages.push(assistantMsg)
+    await touchConversation(conv.id, {
+      last_message_at: assistantMsg.created_at,
+      last_preview: reply.slice(0, 140),
+      last_role: 'assistant',
+    })
+    await handOffToOwner(conv, earlyReason.reason, text)
+    conv.mode = 'owner'
+    return respond({ reply, whatsappUrl: assistantMsg.meta?.whatsappUrl ?? null, handedOff: true })
+  }
+
+  // Otherwise the assistant answers, using the SAVED conversation as context.
+  const history = await loadAiHistory(conv.id)
+  const result = await runAssistant(history)
+  if ('error' in result) return json({ error: result.error }, 502)
+
+  let reply = result.reply
+  const wantsLink =
+    !result.enquirySaved && (UNSURE_RE.test(reply) || WANTS_PERSON_RE.test(text) || NOT_SURE_STRICT_RE.test(reply))
+  const whatsappUrl = result.orderNumber
+    ? whatsappLink(
+        `Hi Edelicacies, I just placed order ${result.orderNumber} on your website chat` +
+          (result.orderCustomer ? ` (${result.orderCustomer})` : '') +
+          '. Please send me the payment details.',
+      )
+    : wantsLink
+      ? whatsappLink(`Hi Edelicacies, I have a question: ${text.slice(0, 300)}`)
+      : null
+
+  // "I'm not sure" twice in this conversation: a person should take over.
+  const earlierUnsure = history.filter((m) => m.role === 'assistant' && NOT_SURE_STRICT_RE.test(m.content)).length
+  const unsureAgain =
+    NOT_SURE_STRICT_RE.test(reply) && earlierUnsure >= 1 && !result.enquirySaved && !result.orderNumber
+  if (unsureAgain) reply += HANDOFF_TEXT.unsure
+
+  const meta: Record<string, unknown> = {}
+  if (whatsappUrl) meta.whatsappUrl = whatsappUrl
+  if (result.orderNumber) meta.orderNumber = result.orderNumber
+  if (result.trackUrl) meta.trackUrl = result.trackUrl
+  if (result.enquirySaved) meta.enquirySaved = true
+
+  const assistantMsg = await addMessage(conv.id, 'assistant', reply, Object.keys(meta).length ? meta : null)
+  outMessages.push(assistantMsg)
+  await touchConversation(conv.id, {
+    last_message_at: assistantMsg.created_at,
+    last_preview: reply.slice(0, 140),
+    last_role: 'assistant',
+    ...(result.customerName ? { customer_name: result.customerName } : {}),
+    ...(result.customerContact ? { customer_contact: result.customerContact } : {}),
+  })
+
+  if (unsureAgain) {
+    await handOffToOwner(conv, "The assistant could not answer twice in a row", text)
+    conv.mode = 'owner'
+  }
+
+  // "sources" shows which notes were found and how close they were. It is
+  // here so we can tune MIN_SIMILARITY together; we will remove it before launch.
+  const sources = result.faqMatches.map((m) => ({
+    question: m.question,
+    similarity: Number(m.similarity.toFixed(3)),
+  }))
+
+  return respond({
+    reply,
+    model: result.modelUsed,
+    usage: result.usage,
+    sources,
+    whatsappUrl,
+    enquirySaved: result.enquirySaved,
+    orderNumber: result.orderNumber,
+    trackUrl: result.trackUrl,
+    handedOff: unsureAgain,
+  })
+}
+
+// Older copies of the website sent the whole chat each time and kept nothing
+// on the server. Still answered, so a half-updated deploy never breaks chat.
+async function handleLegacy(rawMessages: unknown): Promise<Response> {
+  const incoming = Array.isArray(rawMessages) ? rawMessages : []
   const messages: ChatMessage[] = incoming
     .filter(
       (m): m is ChatMessage =>
@@ -556,135 +1079,45 @@ Deno.serve(async (req) => {
     )
     .slice(-MAX_MESSAGES)
     .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_CHARS_PER_MESSAGE) }))
-
   if (messages.length === 0 || messages[messages.length - 1].role !== 'user') {
     return json({ error: 'The last message must be from the user.' }, 400)
   }
+  const result = await runAssistant(messages)
+  if ('error' in result) return json({ error: result.error }, 502)
+  const lastQuestion = messages[messages.length - 1].content
+  const wantsLink = !result.enquirySaved && (UNSURE_RE.test(result.reply) || WANTS_PERSON_RE.test(lastQuestion))
+  return json({
+    reply: result.reply,
+    model: result.modelUsed,
+    usage: result.usage,
+    whatsappUrl: wantsLink ? whatsappLink(`Hi Edelicacies, I have a question: ${lastQuestion.slice(0, 300)}`) : null,
+    enquirySaved: result.enquirySaved,
+    orderNumber: result.orderNumber,
+    trackUrl: result.trackUrl,
+  })
+}
+
+Deno.serve(async (req) => {
+  // Browsers send a "preflight" OPTIONS request first, asking permission.
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
+  if (req.method !== 'POST') return json({ error: 'Use POST.' }, 405)
+
+  if (!OPENROUTER_API_KEY) {
+    return json({ error: 'The assistant is not set up yet (missing key).' }, 500)
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await req.json()
+  } catch {
+    return json({ error: 'Invalid request.' }, 400)
+  }
 
   try {
-    // Fresh menu on every message, so dashboard changes show up straight away.
-    // At the same time, search the business notes. The search uses the last
-    // two things the customer said, so a follow-up like "and for pickup?"
-    // still carries the topic.
-    const lastQuestion = messages[messages.length - 1].content
-    const searchText = messages
-      .filter((m) => m.role === 'user')
-      .slice(-2)
-      .map((m) => m.content)
-      .join(' ')
-    let faqMatches: FaqMatch[] = []
-    const catalog: Catalog = new Map()
-    const [menuText] = await Promise.all([
-      loadMenuText(catalog),
-      findFaqNotes(searchText)
-        .then((m) => {
-          faqMatches = m
-        })
-        .catch((err) => console.error('could not search business notes', err)),
-    ])
-
-    // The conversation we send to the AI. Tool results get appended to it.
-    // deno-lint-ignore no-explicit-any
-    const convo: any[] = [
-      { role: 'system', content: buildSystemPrompt(menuText, formatFaqNotes(faqMatches)) },
-      ...messages,
-    ]
-
-    let reply = ''
-    let modelUsed: string | null = null
-    let usage: unknown = null
-    let enquirySaved = false
-    let orderNumber: string | null = null
-    let orderCustomer: string | null = null
-    let trackUrl: string | null = null
-
-    // Up to 3 rounds: the AI may ask for the tool, we run it, then it writes
-    // its final answer. After the second round we stop offering the tool.
-    for (let round = 0; round < 3; round++) {
-      const aiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          models: MODELS,
-          temperature: TEMPERATURE,
-          messages: convo,
-          ...(round < 2 ? { tools: TOOLS, tool_choice: 'auto', provider: { require_parameters: true } } : {}),
-        }),
-      })
-
-      const data = await aiResponse.json()
-      if (!aiResponse.ok) {
-        console.error('OpenRouter error', aiResponse.status, JSON.stringify(data))
-        return json({ error: 'The assistant is busy right now. Please try again.' }, 502)
-      }
-
-      modelUsed = data.model ?? modelUsed
-      usage = data.usage ?? usage
-      const message = data?.choices?.[0]?.message
-      const calls = message?.tool_calls
-
-      if (Array.isArray(calls) && calls.length > 0 && round < 2) {
-        convo.push({ role: 'assistant', content: message.content ?? '', tool_calls: calls })
-        for (const call of calls) {
-          let result = 'Error: unknown tool.'
-          if (call?.function?.name === 'send_enquiry') {
-            const outcome = await runSendEnquiry(call.function.arguments ?? '{}', messages)
-            result = outcome.result
-            if (outcome.saved) enquirySaved = true
-          } else if (call?.function?.name === 'place_order') {
-            // Never place two orders from one customer message.
-            if (orderNumber) {
-              result = `Error: order ${orderNumber} was already placed. Do not place another.`
-            } else {
-              const outcome = await runPlaceOrder(call.function.arguments ?? '{}', catalog)
-              result = outcome.result
-              orderNumber = outcome.orderNumber
-              orderCustomer = outcome.customerName
-              trackUrl = outcome.trackUrl
-            }
-          }
-          convo.push({ role: 'tool', tool_call_id: call.id, content: result })
-        }
-        continue
-      }
-
-      reply = String(message?.content ?? '').trim()
-      break
-    }
-
-    if (!reply && enquirySaved) {
-      reply = 'Thank you. Your question has been sent to the team, and they will reply on the contact you gave.'
-    }
-    if (!reply && orderNumber) {
-      reply =
-        `Thank you! Your order ${orderNumber} has been received and is waiting for our team's approval. ` +
-        'We will send you the payment details on WhatsApp.'
-    }
-    if (!reply) return json({ error: 'The assistant sent an empty reply.' }, 502)
-
-    // A WhatsApp button with the customer's question already typed in. Built
-    // here in code (not by the AI) so the link is always correct.
-    const wantsLink = !enquirySaved && (UNSURE_RE.test(reply) || WANTS_PERSON_RE.test(lastQuestion))
-    const whatsappUrl = orderNumber
-      ? whatsappLink(
-          `Hi Edelicacies, I just placed order ${orderNumber} on your website chat` +
-            (orderCustomer ? ` (${orderCustomer})` : '') +
-            '. Please send me the payment details.',
-        )
-      : wantsLink
-        ? whatsappLink(`Hi Edelicacies, I have a question: ${lastQuestion.slice(0, 300)}`)
-        : null
-
-    // "sources" shows which notes were found and how close they were. It is
-    // here so we can tune MIN_SIMILARITY together; we will remove it before launch.
-    const sources = faqMatches.map((m) => ({
-      question: m.question,
-      similarity: Number(m.similarity.toFixed(3)),
-    }))
-    return json({ reply, model: modelUsed, usage, sources, whatsappUrl, enquirySaved, orderNumber, trackUrl })
+    if (body.action === 'poll') return await handlePoll(body)
+    if (typeof body.message === 'string') return await handleSend(body)
+    if (Array.isArray(body.messages)) return await handleLegacy(body.messages)
+    return json({ error: 'No message provided.' }, 400)
   } catch (err) {
     console.error('chat function failed', err)
     return json({ error: 'Something went wrong. Please try again.' }, 500)

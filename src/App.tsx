@@ -42,6 +42,9 @@ const OwnerReviews = lazy(() => import('./pages/dashboard/Reviews').then((m) => 
 const OwnerSubscribers = lazy(() =>
   import('./pages/dashboard/Subscribers').then((m) => ({ default: m.OwnerSubscribers })),
 )
+const OwnerInbox = lazy(() =>
+  import('./pages/dashboard/Inbox').then((m) => ({ default: m.OwnerInbox })),
+)
 const OwnerEnquiries = lazy(() =>
   import('./pages/dashboard/Enquiries').then((m) => ({ default: m.OwnerEnquiries })),
 )
@@ -135,6 +138,7 @@ function App() {
           <Route path="discount-codes" element={<OwnerDiscountCodes />} />
           <Route path="reviews" element={<OwnerReviews />} />
           <Route path="subscribers" element={<OwnerSubscribers />} />
+          <Route path="inbox" element={<OwnerInbox />} />
           <Route path="enquiries" element={<OwnerEnquiries />} />
           <Route path="messaging" element={<OwnerMessaging />} />
           <Route path="email-templates" element={<OwnerEmailTemplates />} />

@@ -1,7 +1,8 @@
-import { useState, type ComponentType, type SVGProps } from 'react'
+import { useEffect, useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { isSupabaseConfigured } from '../../lib/supabase'
+import { countUnreadConversations } from '../../lib/api/inbox'
 import logo from '../../assets/brand/logo-wordmark-white.png'
 import logoMark from '../../assets/brand/logo-mark-white.png'
 import {
@@ -15,6 +16,7 @@ import {
   IconBell,
   IconMail,
   IconInbox,
+  IconChat,
   IconSend,
   IconSliders,
   IconMore,
@@ -35,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard/discount-codes', label: 'Discount Codes', icon: IconTag },
   { to: '/dashboard/reviews', label: 'Reviews', icon: IconStar },
   { to: '/dashboard/subscribers', label: 'Subscribers', icon: IconBell },
+  { to: '/dashboard/inbox', label: 'Inbox', icon: IconChat },
   { to: '/dashboard/enquiries', label: 'Enquiries', icon: IconInbox },
   { to: '/dashboard/messaging', label: 'Messaging', icon: IconSend },
   { to: '/dashboard/email-templates', label: 'Email Templates', icon: IconMail },
@@ -48,6 +51,23 @@ export function OwnerLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const [moreOpen, setMoreOpen] = useState(false)
+  const [unreadChats, setUnreadChats] = useState(0)
+
+  // A small red number on "Inbox" when customers are waiting for you.
+  useEffect(() => {
+    if (!session || isOwner !== true) return
+    let cancelled = false
+    const check = () =>
+      countUnreadConversations()
+        .then((n) => !cancelled && setUnreadChats(n))
+        .catch(() => undefined)
+    void check()
+    const id = window.setInterval(() => void check(), 20000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [session, isOwner])
 
   if (!isSupabaseConfigured) return <Navigate to="/dashboard/login" replace />
   if (loading) {
@@ -99,6 +119,11 @@ export function OwnerLayout() {
             >
               <item.icon className="h-5 w-5 shrink-0" />
               {item.label}
+              {item.to === '/dashboard/inbox' && unreadChats > 0 && (
+                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[11px] font-bold text-brand-600">
+                  {unreadChats}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -175,7 +200,14 @@ export function OwnerLayout() {
                     location.pathname.startsWith(item.to) ? 'bg-brand-50 text-brand-600' : 'bg-ink-50 text-ink-600'
                   }`}
                 >
-                  <item.icon className="h-6 w-6" />
+                  <span className="relative">
+                    <item.icon className="h-6 w-6" />
+                    {item.to === '/dashboard/inbox' && unreadChats > 0 && (
+                      <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-500 px-1 text-[10px] font-bold text-white">
+                        {unreadChats}
+                      </span>
+                    )}
+                  </span>
                   {item.label}
                 </button>
               ))}

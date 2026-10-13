@@ -1708,3 +1708,159 @@ $$;
 
 revoke all on function claim_order(text, text) from public, anon;
 grant execute on function claim_order(text, text) to authenticated;
+
+-- ============================================================================
+-- CHAT CONVERSATIONS + OWNER TAKEOVER (Phase 4)
+-- ============================================================================
+-- Every website chat is saved here. Each conversation has a MODE:
+--   'ai'    the assistant answers
+--   'owner' you answer, and the assistant is never even called
+-- The chat Edge Function (service key) writes customer/assistant messages.
+-- Only the owner can read or change anything here from the dashboard; the
+-- public has no access to these tables at all.
+
+create table if not exists conversations (
+  id uuid primary key default gen_random_uuid(),
+  -- Secret the visitor's browser keeps, so only they can read/continue it.
+  access_token uuid not null default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  last_message_at timestamptz not null default now(),
+  mode text not null default 'ai' check (mode in ('ai', 'owner')),
+  handoff_reason text,
+  handoff_at timestamptz,
+  owner_unread boolean not null default false,
+  last_owner_message_at timestamptz,
+  owner_alerted_at timestamptz,
+  last_preview text,
+  last_role text,
+  customer_name text,
+  customer_contact text
+);
+
+create index if not exists conversations_last_idx on conversations(last_message_at desc);
+create index if not exists conversations_unread_idx on conversations(owner_unread) where owner_unread;
+
+create table if not exists chat_messages (
+  id bigint generated always as identity primary key,
+  conversation_id uuid not null references conversations(id) on delete cascade,
+  role text not null check (role in ('user', 'assistant', 'owner', 'system')),
+  content text not null,
+  meta jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists chat_messages_conv_idx on chat_messages(conversation_id, id);
+
+alter table conversations enable row level security;
+alter table chat_messages enable row level security;
+
+drop policy if exists "conversations owner all" on conversations;
+create policy "conversations owner all"
+  on conversations for all to authenticated using (is_owner()) with check (is_owner());
+drop policy if exists "chat_messages owner all" on chat_messages;
+create policy "chat_messages owner all"
+  on chat_messages for all to authenticated using (is_owner()) with check (is_owner());
+
+-- The owner types a reply. Sending a reply also takes the chat over, so the
+-- assistant can never answer on top of you.
+create or replace function owner_send_message(p_conversation_id uuid, p_content text)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_text text := btrim(coalesce(p_content, ''));
+  v_id bigint;
+  v_mode text;
+begin
+  if not is_owner() then
+    raise exception 'NOT_ALLOWED';
+  end if;
+  if v_text = '' then
+    raise exception 'EMPTY_MESSAGE';
+  end if;
+  if char_length(v_text) > 2000 then
+    raise exception 'MESSAGE_TOO_LONG';
+  end if;
+
+  select mode into v_mode from conversations where id = p_conversation_id for update;
+  if v_mode is null then
+    raise exception 'CONVERSATION_NOT_FOUND';
+  end if;
+
+  if v_mode <> 'owner' then
+    insert into chat_messages (conversation_id, role, content)
+    values (p_conversation_id, 'system', 'A member of our team has joined the chat.');
+  end if;
+
+  insert into chat_messages (conversation_id, role, content)
+  values (p_conversation_id, 'owner', v_text)
+  returning id into v_id;
+
+  update conversations
+    set mode = 'owner',
+        handoff_at = coalesce(handoff_at, now()),
+        last_message_at = now(),
+        updated_at = now(),
+        last_preview = left(v_text, 140),
+        last_role = 'owner',
+        last_owner_message_at = now(),
+        owner_unread = false
+    where id = p_conversation_id;
+
+  return v_id;
+end;
+$$;
+
+revoke all on function owner_send_message(uuid, text) from public, anon;
+grant execute on function owner_send_message(uuid, text) to authenticated;
+
+-- "Take over" / "Hand back to AI".
+create or replace function set_conversation_mode(p_conversation_id uuid, p_mode text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_current text;
+begin
+  if not is_owner() then
+    raise exception 'NOT_ALLOWED';
+  end if;
+  if p_mode not in ('ai', 'owner') then
+    raise exception 'INVALID_MODE';
+  end if;
+
+  select mode into v_current from conversations where id = p_conversation_id for update;
+  if v_current is null then
+    raise exception 'CONVERSATION_NOT_FOUND';
+  end if;
+  if v_current = p_mode then
+    return;
+  end if;
+
+  if p_mode = 'owner' then
+    insert into chat_messages (conversation_id, role, content)
+    values (p_conversation_id, 'system', 'A member of our team has joined the chat.');
+    update conversations
+      set mode = 'owner', handoff_at = coalesce(handoff_at, now()), owner_unread = false,
+          updated_at = now(), last_message_at = now(),
+          last_preview = 'A member of our team has joined the chat.', last_role = 'system'
+      where id = p_conversation_id;
+  else
+    insert into chat_messages (conversation_id, role, content)
+    values (p_conversation_id, 'system', 'You are back with the Edelicacies assistant. Ask me anything.');
+    update conversations
+      set mode = 'ai', handoff_reason = null, handoff_at = null, owner_unread = false,
+          updated_at = now(), last_message_at = now(),
+          last_preview = 'You are back with the Edelicacies assistant.', last_role = 'system'
+      where id = p_conversation_id;
+  end if;
+end;
+$$;
+
+revoke all on function set_conversation_mode(uuid, text) from public, anon;
+grant execute on function set_conversation_mode(uuid, text) to authenticated;

@@ -1,0 +1,76 @@
+import { supabase } from '../supabase'
+
+export interface ConversationRow {
+  id: string
+  created_at: string
+  last_message_at: string
+  mode: 'ai' | 'owner'
+  handoff_reason: string | null
+  handoff_at: string | null
+  owner_unread: boolean
+  last_preview: string | null
+  last_role: string | null
+  customer_name: string | null
+  customer_contact: string | null
+}
+
+export interface ThreadMessage {
+  id: number
+  role: 'user' | 'assistant' | 'owner' | 'system'
+  content: string
+  meta: Record<string, unknown> | null
+  created_at: string
+}
+
+export async function fetchConversations(): Promise<ConversationRow[]> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select(
+      'id, created_at, last_message_at, mode, handoff_reason, handoff_at, owner_unread, last_preview, last_role, customer_name, customer_contact',
+    )
+    .order('last_message_at', { ascending: false })
+    .limit(100)
+  if (error) throw error
+  return (data ?? []) as ConversationRow[]
+}
+
+export async function fetchThread(conversationId: string): Promise<ThreadMessage[]> {
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('id, role, content, meta, created_at')
+    .eq('conversation_id', conversationId)
+    .order('id', { ascending: true })
+    .limit(500)
+  if (error) throw error
+  return (data ?? []) as ThreadMessage[]
+}
+
+export async function sendOwnerReply(conversationId: string, content: string): Promise<void> {
+  const { error } = await supabase.rpc('owner_send_message', {
+    p_conversation_id: conversationId,
+    p_content: content,
+  })
+  if (error) throw error
+}
+
+export async function setConversationMode(conversationId: string, mode: 'ai' | 'owner'): Promise<void> {
+  const { error } = await supabase.rpc('set_conversation_mode', {
+    p_conversation_id: conversationId,
+    p_mode: mode,
+  })
+  if (error) throw error
+}
+
+export async function markConversationRead(conversationId: string): Promise<void> {
+  const { error } = await supabase.from('conversations').update({ owner_unread: false }).eq('id', conversationId)
+  if (error) throw error
+}
+
+export async function countUnreadConversations(): Promise<number> {
+  const { count, error } = await supabase
+    .from('conversations')
+    .select('id', { count: 'exact', head: true })
+    .eq('owner_unread', true)
+  if (error) throw error
+  return count ?? 0
+}
