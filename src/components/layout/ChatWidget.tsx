@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendChat, type ChatMessage } from '../../lib/chat'
 
-const GREETING: ChatMessage = {
+// What we keep on screen for each message. Only role and content are ever
+// sent to the AI; the extras are just for showing buttons.
+type ShownMessage = ChatMessage & {
+  whatsappUrl?: string | null
+  enquirySaved?: boolean
+  orderNumber?: string | null
+  trackUrl?: string | null
+}
+
+const GREETING: ShownMessage = {
   role: 'assistant',
   content: "Hi! I'm the Edelicacies assistant. Ask me anything about our food.",
 }
 
 export function ChatWidget() {
   const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([GREETING])
+  const [messages, setMessages] = useState<ShownMessage[]>([GREETING])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -24,7 +33,7 @@ export function ChatWidget() {
     const text = input.trim()
     if (!text || loading) return
 
-    const next: ChatMessage[] = [...messages, { role: 'user', content: text }]
+    const next: ShownMessage[] = [...messages, { role: 'user', content: text }]
     setMessages(next)
     setInput('')
     setError(null)
@@ -33,9 +42,10 @@ export function ChatWidget() {
     try {
       // The greeting is our own text, not something the customer said, so we
       // don't send it to the AI.
-      const { reply, usage } = await sendChat(next.slice(1))
+      const plain: ChatMessage[] = next.slice(1).map((m) => ({ role: m.role, content: m.content }))
+      const { reply, usage, whatsappUrl, enquirySaved, orderNumber, trackUrl } = await sendChat(plain)
       if (usage) console.log('tokens used:', usage)
-      setMessages([...next, { role: 'assistant', content: reply.trim() }])
+      setMessages([...next, { role: 'assistant', content: reply.trim(), whatsappUrl, enquirySaved, orderNumber, trackUrl }])
     } catch (err) {
       console.error('chat failed', err)
       setError("Sorry, I couldn't reply just now. Please try again.")
@@ -65,7 +75,7 @@ export function ChatWidget() {
 
           <div className="flex-1 space-y-2 overflow-y-auto bg-cream-50 p-3">
             {messages.map((m, i) => (
-              <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+              <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex flex-col items-start gap-2'}>
                 <p
                   className={
                     'max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ' +
@@ -76,6 +86,36 @@ export function ChatWidget() {
                 >
                   {m.content}
                 </p>
+                {m.orderNumber && (
+                  <p className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">
+                    <span aria-hidden>✓</span> Order {m.orderNumber} received, waiting for approval
+                  </p>
+                )}
+                {m.enquirySaved && (
+                  <p className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">
+                    <span aria-hidden>✓</span> Sent to the team
+                  </p>
+                )}
+                {m.trackUrl && (
+                  <a
+                    href={m.trackUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-full bg-ink-900 px-4 text-[13px] font-semibold text-white shadow-sm active:scale-95"
+                  >
+                    Track my order
+                  </a>
+                )}
+                {m.whatsappUrl && (
+                  <a
+                    href={m.whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#25D366] px-4 text-[13px] font-semibold text-white shadow-sm active:scale-95"
+                  >
+                    {m.orderNumber ? 'Continue on WhatsApp for payment details' : 'Chat with the team on WhatsApp'}
+                  </a>
+                )}
               </div>
             ))}
             {loading && (
