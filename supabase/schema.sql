@@ -1864,3 +1864,111 @@ $$;
 
 revoke all on function set_conversation_mode(uuid, text) from public, anon;
 grant execute on function set_conversation_mode(uuid, text) to authenticated;
+
+-- ============================================================================
+-- PHASE 5: USAGE LOG, SPENDING CAP, PER-VISITOR LIMITS
+-- ============================================================================
+
+-- One row for every time the assistant was asked to think: what it cost, how
+-- long it took, and whether it failed. The monitoring page reads this.
+create table if not exists ai_usage (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  conversation_id uuid references conversations(id) on delete set null,
+  kind text not null default 'chat' check (kind in ('chat', 'budget_stop')),
+  model text,
+  prompt_tokens integer not null default 0,
+  completion_tokens integer not null default 0,
+  total_tokens integer not null default 0,
+  cost numeric not null default 0,
+  latency_ms integer,
+  ok boolean not null default true,
+  error text
+);
+
+create index if not exists ai_usage_created_idx on ai_usage(created_at desc);
+
+alter table ai_usage enable row level security;
+drop policy if exists "ai_usage owner read" on ai_usage;
+create policy "ai_usage owner read"
+  on ai_usage for select to authenticated using (is_owner());
+-- Writes come only from the chat Edge Function (service key).
+
+-- Visitors are tracked by a one-way hash of their network address (never the
+-- address itself), only so one person cannot flood the assistant.
+alter table conversations add column if not exists ip_hash text;
+alter table conversations add column if not exists ever_handed_off boolean not null default false;
+alter table chat_messages add column if not exists ip_hash text;
+create index if not exists conversations_ip_idx on conversations(ip_hash, created_at);
+create index if not exists chat_messages_ip_idx on chat_messages(ip_hash, created_at);
+
+-- Daily AI limits. When either is reached the assistant politely pauses for
+-- the rest of the day and points people to WhatsApp. Change these any time.
+-- usd: money the assistant may spend per day (OpenRouter reports the cost).
+-- max_calls: how many AI answers per day (also protects the free-model limit).
+insert into settings (key, value) values
+  ('ai_daily_budget', '{"usd": 1, "max_calls": 400}')
+on conflict (key) do nothing;
+
+-- Per-visitor chat limits (change these any time; the defaults are shown).
+-- chats_per_visitor_per_hour: new chats one visitor may start in an hour.
+-- messages_per_visitor_per_10_min: messages one visitor may send in 10 minutes.
+insert into settings (key, value) values
+  ('chat_limits', '{"chats_per_visitor_per_hour": 8, "messages_per_visitor_per_10_min": 30}')
+on conflict (key) do nothing;
+
+-- ============================================================================
+-- KNOWLEDGE GAPS: questions the assistant could not answer (kept for days)
+-- ============================================================================
+-- The chat function adds a row each time the assistant admits it does not
+-- know. They stay for 14 days, you can mark one "done" (you added a note) or
+-- delete it, and anything left expires on its own (cleaned up every night).
+
+create table if not exists knowledge_gaps (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '14 days'),
+  conversation_id uuid references conversations(id) on delete set null,
+  question text not null,
+  bot_reply text,
+  status text not null default 'open' check (status in ('open', 'done'))
+);
+
+create index if not exists knowledge_gaps_expires_idx on knowledge_gaps(expires_at);
+create index if not exists knowledge_gaps_status_idx on knowledge_gaps(status, created_at desc);
+
+alter table knowledge_gaps enable row level security;
+drop policy if exists "knowledge_gaps owner all" on knowledge_gaps;
+create policy "knowledge_gaps owner all"
+  on knowledge_gaps for all to authenticated using (is_owner()) with check (is_owner());
+-- Rows are written by the chat Edge Function (service key) only.
+
+-- One-time catch-up: turn "I'm not sure" replies already in your saved chats
+-- into gaps. Only runs while the table is empty, so deleting a gap on purpose
+-- is never undone by re-running this file.
+insert into knowledge_gaps (conversation_id, question, bot_reply, created_at)
+select m.conversation_id, prev.content, m.content, m.created_at
+from chat_messages m
+join lateral (
+  select p.content from chat_messages p
+  where p.conversation_id = m.conversation_id and p.role = 'user' and p.id < m.id
+  order by p.id desc limit 1
+) prev on true
+where m.role = 'assistant'
+  and m.created_at > now() - interval '14 days'
+  and m.content ~* '(not sure|don''t have|do not have|can''t confirm|cannot confirm|unable to)'
+  and not exists (select 1 from knowledge_gaps);
+
+-- Nightly clean-up of expired gaps (2am).
+do $$
+begin
+  if exists (select 1 from cron.job where jobname = 'edelicacies-clean-gaps') then
+    perform cron.unschedule('edelicacies-clean-gaps');
+  end if;
+end $$;
+
+select cron.schedule(
+  'edelicacies-clean-gaps',
+  '0 2 * * *',
+  $$ delete from knowledge_gaps where expires_at < now(); $$
+);

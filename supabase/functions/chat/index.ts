@@ -489,11 +489,17 @@ async function runPlaceOrder(rawArgs: string, catalog: Catalog): Promise<OrderOu
 
   // Ask the existing email function to send the "received" and "needs approval"
   // emails. A failure here must never undo a saved order.
-  fetch(`${SUPABASE_URL}/functions/v1/send-order-email`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderId: placed.order_id, event: 'new_order' }),
-  }).catch((err) => console.error('order email failed', err))
+  // Awaited on purpose: a background request can be cut off when the
+  // function finishes, which would lose the customer's confirmation email.
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/send-order-email`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: placed.order_id, event: 'new_order' }),
+    })
+  } catch (err) {
+    console.error('order email failed', err)
+  }
 
   return {
     result:
@@ -620,16 +626,25 @@ async function findConversation(id: unknown, token: unknown): Promise<Conversati
   return (data as Conversation | null) ?? null
 }
 
-async function createConversation(): Promise<Conversation | null> {
+async function createConversation(ipHash: string | null): Promise<Conversation | null> {
   const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
   const { count } = await admin
     .from('conversations')
     .select('id', { count: 'exact', head: true })
     .gte('created_at', since)
   if ((count ?? 0) >= MAX_NEW_CONVERSATIONS_PER_HOUR) return null
+  if (ipHash) {
+    const limits = await loadVisitorLimits()
+    const { count: fromThisVisitor } = await admin
+      .from('conversations')
+      .select('id', { count: 'exact', head: true })
+      .eq('ip_hash', ipHash)
+      .gte('created_at', since)
+    if ((fromThisVisitor ?? 0) >= limits.chatsPerHour) return null
+  }
   const { data, error } = await admin
     .from('conversations')
-    .insert({})
+    .insert({ ip_hash: ipHash })
     .select('id, access_token, mode, handoff_at, last_owner_message_at, owner_alerted_at, customer_name')
     .single()
   if (error) {
@@ -644,10 +659,11 @@ async function addMessage(
   role: StoredMessage['role'],
   content: string,
   meta: Record<string, unknown> | null = null,
+  ipHash: string | null = null,
 ): Promise<StoredMessage> {
   const { data, error } = await admin
     .from('chat_messages')
-    .insert({ conversation_id: conversationId, role, content, meta })
+    .insert({ conversation_id: conversationId, role, content, meta, ip_hash: ipHash })
     .select('id, role, content, meta, created_at')
     .single()
   if (error || !data) throw error ?? new Error('could not save message')
@@ -705,9 +721,11 @@ async function sendOwnerEmail(subject: string, html: string): Promise<void> {
 }
 
 function alertHtml(title: string, lines: string[], conversationId: string): string {
-  const link = SITE_URL
-    ? `<p><a href="${SITE_URL}/dashboard/inbox?c=${conversationId}" style="color:#ff002c;font-weight:600;">Open the chat in your inbox</a></p>`
-    : '<p>Open Dashboard &rarr; Inbox to reply.</p>'
+  const link = !SITE_URL
+    ? '<p>Open your dashboard to see more.</p>'
+    : conversationId
+      ? `<p><a href="${SITE_URL}/dashboard/inbox?c=${conversationId}" style="color:#ff002c;font-weight:600;">Open the chat in your inbox</a></p>`
+      : `<p><a href="${SITE_URL}/dashboard" style="color:#ff002c;font-weight:600;">Open your dashboard</a></p>`
   return `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:480px;line-height:1.5;color:#121216;">
     <h2 style="margin:0 0 12px;">${esc(title)}</h2>
     ${lines.map((l) => `<p style="margin:0 0 8px;">${l}</p>`).join('')}
@@ -726,6 +744,7 @@ async function handOffToOwner(
     mode: 'owner',
     handoff_reason: reason,
     handoff_at: new Date().toISOString(),
+    ever_handed_off: true,
     owner_unread: true,
     owner_alerted_at: new Date().toISOString(),
   })
@@ -882,6 +901,129 @@ async function runAssistant(history: ChatMessage[]): Promise<AssistantResult | {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 5: usage log, daily spending cap, per-visitor limits
+// ---------------------------------------------------------------------------
+
+// Defaults; the owner can change them in the `chat_limits` setting (useful
+// when running the test suite, which starts many chats from one computer).
+const DEFAULT_CHATS_PER_VISITOR_PER_HOUR = 8
+const DEFAULT_MESSAGES_PER_VISITOR_PER_10_MIN = 30
+
+async function loadVisitorLimits(): Promise<{ chatsPerHour: number; messagesPer10Min: number }> {
+  try {
+    const { data } = await admin.from('settings').select('value').eq('key', 'chat_limits').maybeSingle()
+    const chats = Number(data?.value?.chats_per_visitor_per_hour)
+    const messages = Number(data?.value?.messages_per_visitor_per_10_min)
+    return {
+      chatsPerHour: chats > 0 ? chats : DEFAULT_CHATS_PER_VISITOR_PER_HOUR,
+      messagesPer10Min: messages > 0 ? messages : DEFAULT_MESSAGES_PER_VISITOR_PER_10_MIN,
+    }
+  } catch {
+    return {
+      chatsPerHour: DEFAULT_CHATS_PER_VISITOR_PER_HOUR,
+      messagesPer10Min: DEFAULT_MESSAGES_PER_VISITOR_PER_10_MIN,
+    }
+  }
+}
+
+// A one-way fingerprint of the visitor's network address. The address itself
+// is never stored, so this cannot be turned back into who they are.
+async function visitorHash(req: Request): Promise<string | null> {
+  const raw =
+    req.headers.get('cf-connecting-ip') ??
+    req.headers.get('x-real-ip') ??
+    (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim()
+  if (!raw) return null
+  const bytes = new TextEncoder().encode(`${raw}|${SERVICE_ROLE_KEY.slice(-12)}`)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32)
+}
+
+// Start of "today" in Nigeria, as a UTC timestamp, for the daily cap.
+function startOfLagosDayUtc(): string {
+  const lagos = lagosDate(0)
+  return new Date(`${lagos}T00:00:00+01:00`).toISOString()
+}
+
+async function logUsage(row: {
+  conversationId: string | null
+  kind?: 'chat' | 'budget_stop'
+  model?: string | null
+  usage?: unknown
+  latencyMs?: number | null
+  ok?: boolean
+  error?: string | null
+}): Promise<void> {
+  // deno-lint-ignore no-explicit-any
+  const u = (row.usage ?? {}) as any
+  const { error } = await admin.from('ai_usage').insert({
+    conversation_id: row.conversationId,
+    kind: row.kind ?? 'chat',
+    model: row.model ?? null,
+    prompt_tokens: Number(u.prompt_tokens) || 0,
+    completion_tokens: Number(u.completion_tokens) || 0,
+    total_tokens: Number(u.total_tokens) || 0,
+    cost: Number(u.cost) || 0,
+    latency_ms: row.latencyMs ?? null,
+    ok: row.ok ?? true,
+    error: row.error ?? null,
+  })
+  if (error) console.error('could not log usage', error)
+}
+
+// Has the assistant used up today's allowance? (Failures to read the numbers
+// never block a customer: we fail open.)
+async function overDailyBudget(): Promise<boolean> {
+  try {
+    const { data: setting } = await admin.from('settings').select('value').eq('key', 'ai_daily_budget').maybeSingle()
+    const usdLimit = Number(setting?.value?.usd)
+    const callLimit = Number(setting?.value?.max_calls)
+    const { data } = await admin
+      .from('ai_usage')
+      .select('cost')
+      .eq('kind', 'chat')
+      .gte('created_at', startOfLagosDayUtc())
+      .limit(5000)
+    const rows = (data ?? []) as { cost: number }[]
+    const spent = rows.reduce((n, r) => n + (Number(r.cost) || 0), 0)
+    if (usdLimit > 0 && spent >= usdLimit) return true
+    if (callLimit > 0 && rows.length >= callLimit) return true
+    return false
+  } catch (err) {
+    console.error('budget check failed', err)
+    return false
+  }
+}
+
+// Tells the owner once per day that the cap was hit.
+async function alertBudgetOnce(): Promise<void> {
+  const { count } = await admin
+    .from('ai_usage')
+    .select('id', { count: 'exact', head: true })
+    .eq('kind', 'budget_stop')
+    .gte('created_at', startOfLagosDayUtc())
+  if ((count ?? 0) > 0) return
+  await logUsage({ conversationId: null, kind: 'budget_stop', ok: false, error: 'Daily AI limit reached' })
+  await sendOwnerEmail(
+    "The assistant reached today's limit",
+    alertHtml(
+      'The assistant has paused for today',
+      [
+        "It reached its daily limit (set in the <code>ai_daily_budget</code> setting), so customers are being pointed to WhatsApp for the rest of the day.",
+        'It starts again automatically tomorrow. You can raise the limit in the settings table if you want it to keep going.',
+      ],
+      '',
+    ),
+  ).catch((err) => console.error('budget alert failed', err))
+}
+
+const BUDGET_REPLY =
+  "Our assistant is taking a short break to keep things running smoothly. Please message our team on WhatsApp and a person will help you."
+
+// ---------------------------------------------------------------------------
 // Request handlers
 // ---------------------------------------------------------------------------
 
@@ -895,7 +1037,7 @@ async function handlePoll(body: Record<string, unknown>): Promise<Response> {
   return json({ mode: conv.mode, messages: messages.map(publicMessage) })
 }
 
-async function handleSend(body: Record<string, unknown>): Promise<Response> {
+async function handleSend(body: Record<string, unknown>, ipHash: string | null): Promise<Response> {
   const text = String(body.message ?? '').trim().slice(0, MAX_CHARS_PER_MESSAGE)
   if (!text) return json({ error: 'Please type a message.' }, 400)
 
@@ -906,7 +1048,7 @@ async function handleSend(body: Record<string, unknown>): Promise<Response> {
     conv = await findConversation(body.conversationId, body.accessToken)
     if (!conv) return json({ error: 'Conversation not found.' }, 404)
   } else {
-    conv = await createConversation()
+    conv = await createConversation(ipHash)
     if (!conv) return json({ error: 'We are very busy right now. Please try again in a few minutes.' }, 429)
     isNew = true
   }
@@ -923,7 +1065,21 @@ async function handleSend(body: Record<string, unknown>): Promise<Response> {
     return json({ error: "You're sending messages very quickly. Please wait a little and try again." }, 429)
   }
 
-  const userMsg = await addMessage(conv.id, 'user', text)
+  // Per-visitor flood guard (across all of that visitor's chats).
+  if (ipHash) {
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const { count: fromVisitor } = await admin
+      .from('chat_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('ip_hash', ipHash)
+      .gte('created_at', tenMinAgo)
+    const limits = await loadVisitorLimits()
+    if ((fromVisitor ?? 0) >= limits.messagesPer10Min) {
+      return json({ error: "You're sending messages very quickly. Please wait a few minutes and try again." }, 429)
+    }
+  }
+
+  const userMsg = await addMessage(conv.id, 'user', text, null, ipHash)
   const outMessages: StoredMessage[] = [userMsg]
   await touchConversation(conv.id, {
     last_message_at: userMsg.created_at,
@@ -1000,10 +1156,39 @@ async function handleSend(body: Record<string, unknown>): Promise<Response> {
     return respond({ reply, whatsappUrl: assistantMsg.meta?.whatsappUrl ?? null, handedOff: true })
   }
 
+  // Daily allowance used up: be polite, point to WhatsApp, tell the owner once.
+  if (await overDailyBudget()) {
+    const whatsappUrlBudget = whatsappLink(`Hi Edelicacies, I have a question: ${text.slice(0, 300)}`)
+    const pause = await addMessage(conv.id, 'assistant', BUDGET_REPLY, { whatsappUrl: whatsappUrlBudget })
+    outMessages.push(pause)
+    await touchConversation(conv.id, {
+      last_message_at: pause.created_at,
+      last_preview: BUDGET_REPLY.slice(0, 140),
+      last_role: 'assistant',
+      owner_unread: true,
+    })
+    // Awaited on purpose: the platform may stop the function right after it
+    // replies, which would silently drop a background email.
+    await alertBudgetOnce()
+    return respond({ reply: BUDGET_REPLY, whatsappUrl: whatsappUrlBudget, paused: true })
+  }
+
   // Otherwise the assistant answers, using the SAVED conversation as context.
   const history = await loadAiHistory(conv.id)
+  const startedAt = Date.now()
   const result = await runAssistant(history)
-  if ('error' in result) return json({ error: result.error }, 502)
+  const latencyMs = Date.now() - startedAt
+  if ('error' in result) {
+    await logUsage({ conversationId: conv.id, latencyMs, ok: false, error: result.error })
+    return json({ error: result.error }, 502)
+  }
+  await logUsage({
+    conversationId: conv.id,
+    model: result.modelUsed,
+    usage: result.usage,
+    latencyMs,
+    ok: true,
+  })
 
   let reply = result.reply
   const wantsLink =
@@ -1032,6 +1217,15 @@ async function handleSend(body: Record<string, unknown>): Promise<Response> {
 
   const assistantMsg = await addMessage(conv.id, 'assistant', reply, Object.keys(meta).length ? meta : null)
   outMessages.push(assistantMsg)
+
+  // The assistant admitted it does not know: keep the question for the
+  // owner's "Questions it couldn't answer" list (it expires on its own).
+  if (NOT_SURE_STRICT_RE.test(result.reply) && !result.enquirySaved && !result.orderNumber) {
+    const { error: gapError } = await admin
+      .from('knowledge_gaps')
+      .insert({ conversation_id: conv.id, question: text.slice(0, 500), bot_reply: result.reply.slice(0, 500) })
+    if (gapError) console.error('could not save knowledge gap', gapError)
+  }
   await touchConversation(conv.id, {
     last_message_at: assistantMsg.created_at,
     last_preview: reply.slice(0, 140),
@@ -1082,8 +1276,18 @@ async function handleLegacy(rawMessages: unknown): Promise<Response> {
   if (messages.length === 0 || messages[messages.length - 1].role !== 'user') {
     return json({ error: 'The last message must be from the user.' }, 400)
   }
+  if (await overDailyBudget()) {
+    await alertBudgetOnce()
+    return json({ reply: BUDGET_REPLY, paused: true })
+  }
+  const startedAt = Date.now()
   const result = await runAssistant(messages)
-  if ('error' in result) return json({ error: result.error }, 502)
+  const latencyMs = Date.now() - startedAt
+  if ('error' in result) {
+    await logUsage({ conversationId: null, latencyMs, ok: false, error: result.error })
+    return json({ error: result.error }, 502)
+  }
+  await logUsage({ conversationId: null, model: result.modelUsed, usage: result.usage, latencyMs, ok: true })
   const lastQuestion = messages[messages.length - 1].content
   const wantsLink = !result.enquirySaved && (UNSURE_RE.test(result.reply) || WANTS_PERSON_RE.test(lastQuestion))
   return json({
@@ -1115,7 +1319,7 @@ Deno.serve(async (req) => {
 
   try {
     if (body.action === 'poll') return await handlePoll(body)
-    if (typeof body.message === 'string') return await handleSend(body)
+    if (typeof body.message === 'string') return await handleSend(body, await visitorHash(req))
     if (Array.isArray(body.messages)) return await handleLegacy(body.messages)
     return json({ error: 'No message provided.' }, 400)
   } catch (err) {
