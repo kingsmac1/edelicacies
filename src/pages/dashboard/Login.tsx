@@ -6,13 +6,27 @@ import { Button } from '../../components/ui/Button'
 import logo from '../../assets/brand/logo-wordmark.png'
 
 export function OwnerLogin() {
-  const { session, signIn, loading } = useAuth()
+  const { session, signIn, loading, isOwner, signOut } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  if (!loading && session) return <Navigate to="/dashboard" replace />
+  if (!loading && session && isOwner !== false) return <Navigate to="/dashboard" replace />
+  if (!loading && session && isOwner === false) {
+    return (
+      <div className="mx-auto flex min-h-[70vh] max-w-sm flex-col items-center justify-center px-4 text-center">
+        <h1 className="text-xl font-semibold text-ink-800">You're signed in as a customer</h1>
+        <p className="mt-2 text-[14px] text-ink-400">Sign out first to use the owner login.</p>
+        <button
+          onClick={() => void signOut()}
+          className="mt-5 min-h-11 rounded-full bg-ink-900 px-5 text-[14px] font-semibold text-white"
+        >
+          Sign out
+        </button>
+      </div>
+    )
+  }
 
   if (!isSupabaseConfigured) {
     return (

@@ -118,6 +118,15 @@ export function IconMail(props: IconProps) {
   )
 }
 
+export function IconInbox(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M3 13.5 5.6 5.8A2 2 0 0 1 7.5 4.5h9a2 2 0 0 1 1.9 1.3L21 13.5" />
+      <path d="M3 13.5v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4h-5l-1.5 2.5h-5L8 13.5H3Z" />
+    </Base>
+  )
+}
+
 export function IconSend(props: IconProps) {
   return (
     <Base {...props}>

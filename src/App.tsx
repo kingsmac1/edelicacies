@@ -4,6 +4,7 @@ import { PublicLayout } from './components/layout/PublicLayout'
 import { Preloader } from './components/layout/Preloader'
 import { Home } from './pages/Home'
 import { Cart } from './pages/Cart'
+import { Account } from './pages/Account'
 import { NotFound } from './pages/NotFound'
 
 const Checkout = lazy(() => import('./pages/Checkout').then((m) => ({ default: m.Checkout })))
@@ -41,6 +42,9 @@ const OwnerReviews = lazy(() => import('./pages/dashboard/Reviews').then((m) => 
 const OwnerSubscribers = lazy(() =>
   import('./pages/dashboard/Subscribers').then((m) => ({ default: m.OwnerSubscribers })),
 )
+const OwnerEnquiries = lazy(() =>
+  import('./pages/dashboard/Enquiries').then((m) => ({ default: m.OwnerEnquiries })),
+)
 const OwnerMessaging = lazy(() =>
   import('./pages/dashboard/Messaging').then((m) => ({ default: m.OwnerMessaging })),
 )
@@ -60,6 +64,7 @@ function App() {
         <Route element={<PublicLayout />}>
           <Route path="/" element={<Home />} />
           <Route path="/cart" element={<Cart />} />
+          <Route path="/account" element={<Account />} />
           <Route
             path="/checkout"
             element={
@@ -130,6 +135,7 @@ function App() {
           <Route path="discount-codes" element={<OwnerDiscountCodes />} />
           <Route path="reviews" element={<OwnerReviews />} />
           <Route path="subscribers" element={<OwnerSubscribers />} />
+          <Route path="enquiries" element={<OwnerEnquiries />} />
           <Route path="messaging" element={<OwnerMessaging />} />
           <Route path="email-templates" element={<OwnerEmailTemplates />} />
           <Route path="settings" element={<OwnerSettings />} />

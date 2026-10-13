@@ -1,0 +1,1 @@
+Your Edelicacies sign-in code is {{ .Token }}

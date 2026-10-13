@@ -243,6 +243,9 @@ Deno.serve(async (req) => {
     })
     const { data: userData } = await callerClient.auth.getUser()
     if (!userData?.user) return json({ error: 'Owner login required.' }, 401)
+    // Customers can log in too, so "logged in" is not enough: must be the owner.
+    const { data: isOwner } = await callerClient.rpc('is_owner')
+    if (isOwner !== true) return json({ error: 'Only the owner can send messages.' }, 403)
     const ownerEmail = userData.user.email ?? ''
 
     const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)

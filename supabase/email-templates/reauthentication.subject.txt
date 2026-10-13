@@ -1,0 +1,1 @@
+Your Edelicacies security code is {{ .Token }}

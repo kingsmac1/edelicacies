@@ -26,6 +26,45 @@ begin
 end;
 $$;
 
+
+-- ----------------------------------------------------------------------------
+-- WHO IS THE OWNER
+-- ----------------------------------------------------------------------------
+-- Customers can create accounts, and a logged-in customer is "authenticated"
+-- just like the owner. So "authenticated" must NOT mean "owner". The owner is
+-- whoever is listed in this table; every owner-only rule below asks
+-- is_owner(). To add another owner later, insert their auth user id here.
+
+create table if not exists owners (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+alter table owners enable row level security;
+-- No policies at all: only is_owner() (below) and the service key can read it.
+
+create or replace function is_owner()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from owners where user_id = auth.uid());
+$$;
+
+revoke all on function is_owner() from public;
+grant execute on function is_owner() to anon, authenticated, service_role;
+
+-- First run only: the existing account is the owner (before this change only
+-- the owner could log in, so the oldest account is theirs). Guarded so that
+-- re-running this file later can NEVER turn a customer into an owner.
+insert into owners (user_id)
+select id from auth.users
+where not exists (select 1 from owners)
+order by created_at
+limit 1;
+
 -- ============================================================================
 -- MENU ITEMS
 -- ============================================================================
@@ -132,19 +171,19 @@ drop policy if exists "menu-images owner write" on storage.objects;
 create policy "menu-images owner write"
   on storage.objects for insert
   to authenticated
-  with check (bucket_id = 'menu-images');
+  with check (bucket_id = 'menu-images' and is_owner());
 
 drop policy if exists "menu-images owner update" on storage.objects;
 create policy "menu-images owner update"
   on storage.objects for update
   to authenticated
-  using (bucket_id = 'menu-images');
+  using (bucket_id = 'menu-images' and is_owner());
 
 drop policy if exists "menu-images owner delete" on storage.objects;
 create policy "menu-images owner delete"
   on storage.objects for delete
   to authenticated
-  using (bucket_id = 'menu-images');
+  using (bucket_id = 'menu-images' and is_owner());
 
 -- ============================================================================
 -- ROW LEVEL SECURITY
@@ -164,39 +203,39 @@ alter table settings enable row level security;
 drop policy if exists "menu_items public read active" on menu_items;
 create policy "menu_items public read active"
   on menu_items for select
-  to anon
+  to anon, authenticated
   using (active = true);
 
 drop policy if exists "menu_items owner read all" on menu_items;
 create policy "menu_items owner read all"
   on menu_items for select
   to authenticated
-  using (true);
+  using (is_owner());
 
 drop policy if exists "menu_items owner write" on menu_items;
 create policy "menu_items owner write"
   on menu_items for insert
   to authenticated
-  with check (true);
+  with check (is_owner());
 
 drop policy if exists "menu_items owner update" on menu_items;
 create policy "menu_items owner update"
   on menu_items for update
   to authenticated
-  using (true)
-  with check (true);
+  using (is_owner())
+  with check (is_owner());
 
 drop policy if exists "menu_items owner delete" on menu_items;
 create policy "menu_items owner delete"
   on menu_items for delete
   to authenticated
-  using (true);
+  using (is_owner());
 
 -- menu_item_variations (visible publicly only via an active parent item)
 drop policy if exists "menu_item_variations public read active" on menu_item_variations;
 create policy "menu_item_variations public read active"
   on menu_item_variations for select
-  to anon
+  to anon, authenticated
   using (
     exists (
       select 1 from menu_items
@@ -209,64 +248,64 @@ drop policy if exists "menu_item_variations owner read all" on menu_item_variati
 create policy "menu_item_variations owner read all"
   on menu_item_variations for select
   to authenticated
-  using (true);
+  using (is_owner());
 
 drop policy if exists "menu_item_variations owner write" on menu_item_variations;
 create policy "menu_item_variations owner write"
   on menu_item_variations for insert
   to authenticated
-  with check (true);
+  with check (is_owner());
 
 drop policy if exists "menu_item_variations owner update" on menu_item_variations;
 create policy "menu_item_variations owner update"
   on menu_item_variations for update
   to authenticated
-  using (true)
-  with check (true);
+  using (is_owner())
+  with check (is_owner());
 
 drop policy if exists "menu_item_variations owner delete" on menu_item_variations;
 create policy "menu_item_variations owner delete"
   on menu_item_variations for delete
   to authenticated
-  using (true);
+  using (is_owner());
 
 -- daily_menus
 drop policy if exists "daily_menus public read published" on daily_menus;
 create policy "daily_menus public read published"
   on daily_menus for select
-  to anon
+  to anon, authenticated
   using (published = true);
 
 drop policy if exists "daily_menus owner read all" on daily_menus;
 create policy "daily_menus owner read all"
   on daily_menus for select
   to authenticated
-  using (true);
+  using (is_owner());
 
 drop policy if exists "daily_menus owner write" on daily_menus;
 create policy "daily_menus owner write"
   on daily_menus for insert
   to authenticated
-  with check (true);
+  with check (is_owner());
 
 drop policy if exists "daily_menus owner update" on daily_menus;
 create policy "daily_menus owner update"
   on daily_menus for update
   to authenticated
-  using (true)
-  with check (true);
+  using (is_owner())
+  with check (is_owner());
 
 drop policy if exists "daily_menus owner delete" on daily_menus;
 create policy "daily_menus owner delete"
   on daily_menus for delete
   to authenticated
-  using (true);
+  using (is_owner());
 
 -- daily_menu_slots (visible publicly only via a published parent menu)
 drop policy if exists "daily_menu_slots public read published" on daily_menu_slots;
 create policy "daily_menu_slots public read published"
   on daily_menu_slots for select
-  to anon
+  to anon, authenticated
   using (
     exists (
       select 1 from daily_menus
@@ -279,26 +318,26 @@ drop policy if exists "daily_menu_slots owner read all" on daily_menu_slots;
 create policy "daily_menu_slots owner read all"
   on daily_menu_slots for select
   to authenticated
-  using (true);
+  using (is_owner());
 
 drop policy if exists "daily_menu_slots owner write" on daily_menu_slots;
 create policy "daily_menu_slots owner write"
   on daily_menu_slots for insert
   to authenticated
-  with check (true);
+  with check (is_owner());
 
 drop policy if exists "daily_menu_slots owner update" on daily_menu_slots;
 create policy "daily_menu_slots owner update"
   on daily_menu_slots for update
   to authenticated
-  using (true)
-  with check (true);
+  using (is_owner())
+  with check (is_owner());
 
 drop policy if exists "daily_menu_slots owner delete" on daily_menu_slots;
 create policy "daily_menu_slots owner delete"
   on daily_menu_slots for delete
   to authenticated
-  using (true);
+  using (is_owner());
 
 -- settings (no secrets live here — just public operational settings like
 -- the announcement banner and shop coordinates)
@@ -312,14 +351,14 @@ drop policy if exists "settings owner write" on settings;
 create policy "settings owner write"
   on settings for insert
   to authenticated
-  with check (true);
+  with check (is_owner());
 
 drop policy if exists "settings owner update" on settings;
 create policy "settings owner update"
   on settings for update
   to authenticated
-  using (true)
-  with check (true);
+  using (is_owner())
+  with check (is_owner());
 
 -- ============================================================================
 -- APP CONFIG (small internal table — lets scheduled jobs call Edge Functions)
@@ -387,29 +426,29 @@ create policy "delivery_bands public read"
   on delivery_bands for select to anon, authenticated using (true);
 drop policy if exists "delivery_bands owner write" on delivery_bands;
 create policy "delivery_bands owner write"
-  on delivery_bands for insert to authenticated with check (true);
+  on delivery_bands for insert to authenticated with check (is_owner());
 drop policy if exists "delivery_bands owner update" on delivery_bands;
 create policy "delivery_bands owner update"
-  on delivery_bands for update to authenticated using (true) with check (true);
+  on delivery_bands for update to authenticated using (is_owner()) with check (is_owner());
 drop policy if exists "delivery_bands owner delete" on delivery_bands;
 create policy "delivery_bands owner delete"
-  on delivery_bands for delete to authenticated using (true);
+  on delivery_bands for delete to authenticated using (is_owner());
 
 drop policy if exists "pickup_windows public read" on pickup_windows;
 create policy "pickup_windows public read"
   on pickup_windows for select to anon, authenticated using (active = true);
 drop policy if exists "pickup_windows owner read all" on pickup_windows;
 create policy "pickup_windows owner read all"
-  on pickup_windows for select to authenticated using (true);
+  on pickup_windows for select to authenticated using (is_owner());
 drop policy if exists "pickup_windows owner write" on pickup_windows;
 create policy "pickup_windows owner write"
-  on pickup_windows for insert to authenticated with check (true);
+  on pickup_windows for insert to authenticated with check (is_owner());
 drop policy if exists "pickup_windows owner update" on pickup_windows;
 create policy "pickup_windows owner update"
-  on pickup_windows for update to authenticated using (true) with check (true);
+  on pickup_windows for update to authenticated using (is_owner()) with check (is_owner());
 drop policy if exists "pickup_windows owner delete" on pickup_windows;
 create policy "pickup_windows owner delete"
-  on pickup_windows for delete to authenticated using (true);
+  on pickup_windows for delete to authenticated using (is_owner());
 
 -- ============================================================================
 -- DISCOUNT CODES
@@ -434,7 +473,7 @@ alter table discount_codes enable row level security;
 
 drop policy if exists "discount_codes owner all" on discount_codes;
 create policy "discount_codes owner all"
-  on discount_codes for all to authenticated using (true) with check (true);
+  on discount_codes for all to authenticated using (is_owner()) with check (is_owner());
 -- No anon policy at all — codes are validated only through the
 -- preview_discount() / place_order() functions below, never read directly.
 
@@ -463,7 +502,7 @@ alter table customers enable row level security;
 
 drop policy if exists "customers owner all" on customers;
 create policy "customers owner all"
-  on customers for all to authenticated using (true) with check (true);
+  on customers for all to authenticated using (is_owner()) with check (is_owner());
 
 -- ============================================================================
 -- ORDERS
@@ -539,10 +578,10 @@ alter table order_items enable row level security;
 -- directly.
 drop policy if exists "orders owner all" on orders;
 create policy "orders owner all"
-  on orders for all to authenticated using (true) with check (true);
+  on orders for all to authenticated using (is_owner()) with check (is_owner());
 drop policy if exists "order_items owner all" on order_items;
 create policy "order_items owner all"
-  on order_items for all to authenticated using (true) with check (true);
+  on order_items for all to authenticated using (is_owner()) with check (is_owner());
 
 -- ============================================================================
 -- REVIEWS
@@ -564,10 +603,10 @@ alter table reviews enable row level security;
 
 drop policy if exists "reviews public read approved" on reviews;
 create policy "reviews public read approved"
-  on reviews for select to anon using (show_on_site = true);
+  on reviews for select to anon, authenticated using (show_on_site = true);
 drop policy if exists "reviews owner all" on reviews;
 create policy "reviews owner all"
-  on reviews for all to authenticated using (true) with check (true);
+  on reviews for all to authenticated using (is_owner()) with check (is_owner());
 -- Public submission goes only through submit_review() below — no direct
 -- insert policy for anon.
 
@@ -590,15 +629,15 @@ alter table subscribers enable row level security;
 
 drop policy if exists "subscribers public insert" on subscribers;
 create policy "subscribers public insert"
-  on subscribers for insert to anon with check (true);
+  on subscribers for insert to anon, authenticated with check (true);
 drop policy if exists "subscribers public unsubscribe" on subscribers;
 create policy "subscribers public unsubscribe"
-  on subscribers for update to anon
+  on subscribers for update to anon, authenticated
   using (true)
   with check (unsubscribed = true);
 drop policy if exists "subscribers owner all" on subscribers;
 create policy "subscribers owner all"
-  on subscribers for all to authenticated using (true) with check (true);
+  on subscribers for all to authenticated using (is_owner()) with check (is_owner());
 
 -- ============================================================================
 -- RECORDS (manual/offline sales) & EXPENSES
@@ -623,7 +662,7 @@ create index if not exists manual_sales_date_idx on manual_sales(sale_date);
 alter table manual_sales enable row level security;
 drop policy if exists "manual_sales owner all" on manual_sales;
 create policy "manual_sales owner all"
-  on manual_sales for all to authenticated using (true) with check (true);
+  on manual_sales for all to authenticated using (is_owner()) with check (is_owner());
 
 create table if not exists expenses (
   id uuid primary key default gen_random_uuid(),
@@ -639,7 +678,7 @@ create index if not exists expenses_date_idx on expenses(expense_date);
 alter table expenses enable row level security;
 drop policy if exists "expenses owner all" on expenses;
 create policy "expenses owner all"
-  on expenses for all to authenticated using (true) with check (true);
+  on expenses for all to authenticated using (is_owner()) with check (is_owner());
 
 -- ============================================================================
 -- FUNCTIONS: checkout, tracking, discounts, reviews
@@ -775,14 +814,15 @@ begin
     id, order_number, menu_date, customer_name, customer_phone, customer_email,
     delivery_type, address_text, address_lat, address_lng, pickup_window_id,
     dispatch_fee_estimate, subtotal, discount_code, discount_amount, total, note,
-    auto_cancel_at
+    auto_cancel_at, user_id
   ) values (
     v_order_id, v_order_number, p_menu_date, trim(p_customer_name), trim(p_customer_phone), p_customer_email,
     p_delivery_type, p_address_text, p_address_lat, p_address_lng, p_pickup_window_id,
     p_dispatch_fee_estimate, v_subtotal,
     case when v_code_valid then upper(p_discount_code) else null end,
     v_discount_amount, v_total, p_note,
-    now() + make_interval(mins => coalesce(v_hold_minutes, 120))
+    now() + make_interval(mins => coalesce(v_hold_minutes, 120)),
+    auth.uid()
   );
 
   insert into order_items (order_id, menu_item_id, variation_id, item_name, variation_label, unit_price, quantity, menu_date)
@@ -826,6 +866,12 @@ as $$
 declare
   v_order record;
 begin
+  -- Only the owner (or our own server functions using the service key) may
+  -- change an order's stage. Without this, anyone who knew an order id could.
+  if not (is_owner() or auth.role() = 'service_role') then
+    raise exception 'NOT_ALLOWED';
+  end if;
+
   select * into v_order from orders where id = p_order_id for update;
   if v_order is null then
     raise exception 'ORDER_NOT_FOUND';
@@ -859,8 +905,8 @@ begin
 end;
 $$;
 
-revoke all on function set_order_status(uuid, text, integer) from public;
-grant execute on function set_order_status(uuid, text, integer) to authenticated;
+revoke all on function set_order_status(uuid, text, integer) from public, anon;
+grant execute on function set_order_status(uuid, text, integer) to authenticated, service_role;
 
 -- Public order tracking: only returns an order when both the order number
 -- AND the phone number match, so customers can't browse each other's orders.
@@ -1122,7 +1168,7 @@ alter table email_templates enable row level security;
 
 drop policy if exists "email_templates owner all" on email_templates;
 create policy "email_templates owner all"
-  on email_templates for all to authenticated using (true) with check (true);
+  on email_templates for all to authenticated using (is_owner()) with check (is_owner());
 -- No anon policy — only the owner (in the dashboard) reads or edits these.
 -- Edge Functions read them using the service role key, which bypasses RLS.
 
@@ -1152,10 +1198,10 @@ alter table faqs enable row level security;
 -- The public can read active FAQs; only the logged-in owner can change them.
 drop policy if exists "faqs public read active" on faqs;
 create policy "faqs public read active"
-  on faqs for select to anon using (active = true);
+  on faqs for select to anon, authenticated using (active = true);
 drop policy if exists "faqs owner all" on faqs;
 create policy "faqs owner all"
-  on faqs for all to authenticated using (true) with check (true);
+  on faqs for all to authenticated using (is_owner()) with check (is_owner());
 
 -- ============================================================================
 -- FAQS: EMBEDDINGS (Phase 3 — search by meaning)
@@ -1341,7 +1387,7 @@ create index if not exists email_campaigns_created_idx on email_campaigns(create
 alter table email_campaigns enable row level security;
 drop policy if exists "email_campaigns owner all" on email_campaigns;
 create policy "email_campaigns owner all"
-  on email_campaigns for all to authenticated using (true) with check (true);
+  on email_campaigns for all to authenticated using (is_owner()) with check (is_owner());
 
 -- How many emails per day your email plan allows (Resend free plan = 100).
 -- The Messaging page stops a broadcast that would use up the allowance and
@@ -1362,9 +1408,303 @@ create policy "email-images public read"
 drop policy if exists "email-images owner write" on storage.objects;
 create policy "email-images owner write"
   on storage.objects for insert to authenticated
-  with check (bucket_id = 'email-images');
+  with check (bucket_id = 'email-images' and is_owner());
 
 drop policy if exists "email-images owner delete" on storage.objects;
 create policy "email-images owner delete"
   on storage.objects for delete to authenticated
-  using (bucket_id = 'email-images');
+  using (bucket_id = 'email-images' and is_owner());
+
+-- ============================================================================
+-- ENQUIRIES (questions the assistant could not answer, sent to the owner)
+-- ============================================================================
+-- When the chat assistant doesn't know something, the customer can leave
+-- their name and a phone number or email. The chat Edge Function saves it
+-- here (using the service key) and emails the owner. Only the owner can read
+-- or change these; the public cannot touch this table at all.
+
+create table if not exists enquiries (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  name text not null,
+  contact text not null,
+  message text not null,
+  conversation text,
+  status text not null default 'new' check (status in ('new', 'contacted', 'resolved')),
+  note text
+);
+
+create index if not exists enquiries_created_idx on enquiries(created_at desc);
+create index if not exists enquiries_status_idx on enquiries(status);
+
+alter table enquiries enable row level security;
+drop policy if exists "enquiries owner all" on enquiries;
+create policy "enquiries owner all"
+  on enquiries for all to authenticated using (is_owner()) with check (is_owner());
+
+-- ============================================================================
+-- CHAT ORDERS: the assistant can place an order that waits for owner approval
+-- ============================================================================
+-- Flow: customer chats -> assistant calls place_chat_order -> order is saved
+-- as "pending_approval" (slots held) -> owner approves or rejects in the
+-- dashboard -> approved orders move to "awaiting_payment" like any other.
+
+-- Where an order came from.
+alter table orders add column if not exists source text not null default 'website';
+alter table orders drop constraint if exists orders_source_check;
+alter table orders add constraint orders_source_check check (source in ('website', 'chat'));
+
+-- Allow the new "pending_approval" status. The old check constraint may have
+-- any auto-generated name, so find it by what it checks and replace it.
+do $$
+declare
+  c record;
+begin
+  for c in
+    select conname from pg_constraint
+    where conrelid = 'orders'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) ilike '%awaiting_payment%'
+  loop
+    execute format('alter table orders drop constraint %I', c.conname);
+  end loop;
+end $$;
+
+alter table orders add constraint orders_status_check check (
+  status in (
+    'pending_approval', 'awaiting_payment', 'paid', 'preparing',
+    'out_for_delivery', 'ready_for_pickup', 'delivered', 'cancelled'
+  )
+);
+
+-- Called ONLY by the chat Edge Function (with the service key). It reuses
+-- place_order() so prices still come from the database and slots are still
+-- locked and decremented safely, then marks the order as a chat order that
+-- needs approval.
+create or replace function place_chat_order(
+  p_menu_date date,
+  p_customer_name text,
+  p_customer_phone text,
+  p_customer_email text,
+  p_delivery_type text,
+  p_address_text text,
+  p_note text,
+  p_items jsonb
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_result jsonb;
+begin
+  v_result := place_order(
+    p_menu_date, p_customer_name, p_customer_phone, p_customer_email,
+    p_delivery_type, p_address_text, null, null, null, null, null, p_note, p_items
+  );
+
+  update orders
+    set status = 'pending_approval', source = 'chat', auto_cancel_at = null
+    where id = (v_result->>'order_id')::uuid;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function place_chat_order(date, text, text, text, text, text, text, jsonb) from public, anon, authenticated;
+grant execute on function place_chat_order(date, text, text, text, text, text, text, jsonb) to service_role;
+
+-- Owner approves a chat order: it becomes "awaiting_payment" and the usual
+-- payment-hold timer starts. (Rejecting uses set_order_status -> cancelled,
+-- which already gives the held slots back.)
+create or replace function approve_order(p_order_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_status text;
+  v_hold integer;
+begin
+  -- Only the owner (or our own server functions using the service key) may
+  -- change an order's stage. Without this, anyone who knew an order id could.
+  if not (is_owner() or auth.role() = 'service_role') then
+    raise exception 'NOT_ALLOWED';
+  end if;
+
+  select status into v_status from orders where id = p_order_id for update;
+  if v_status is null then
+    raise exception 'ORDER_NOT_FOUND';
+  end if;
+  if v_status <> 'pending_approval' then
+    raise exception 'NOT_PENDING';
+  end if;
+
+  select coalesce((value->>'minutes')::integer, 120) into v_hold
+    from settings where key = 'slot_hold_minutes';
+
+  update orders
+    set status = 'awaiting_payment',
+        auto_cancel_at = now() + make_interval(mins => coalesce(v_hold, 120))
+    where id = p_order_id;
+end;
+$$;
+
+revoke all on function approve_order(uuid) from public, anon;
+grant execute on function approve_order(uuid) to authenticated, service_role;
+
+-- Email wording for chat orders (insert-only; never overwrites your edits).
+insert into email_templates (key, label, subject, body, placeholders) values
+  (
+    'new_order_customer_pending',
+    'Chat order received — to customer',
+    'We received your order {{order_number}} — Edelicacies',
+    'Thanks, {{customer_name}}! We''ve received your order {{order_number}} for {{menu_date}}. Our team is reviewing it and will message you on WhatsApp shortly with the payment details. Your items are being held for you.',
+    '{{customer_name}}, {{order_number}}, {{menu_date}}, {{total}}'
+  ),
+  (
+    'new_order_owner_pending',
+    'Chat order waiting for approval — to you',
+    'Order {{order_number}} is waiting for your approval — {{total}}',
+    'A customer placed order {{order_number}} through the chat assistant: {{customer_name}} ({{customer_phone}}). Open Dashboard → Orders to approve or reject it.',
+    '{{customer_name}}, {{customer_phone}}, {{order_number}}, {{menu_date}}, {{total}}, {{delivery_type}}'
+  ),
+  (
+    'order_approved',
+    'Order approved — to customer',
+    'Your order {{order_number}} is approved — Edelicacies',
+    'Hi {{customer_name}}, good news! Your order {{order_number}} has been approved. Our team will send you the payment details on WhatsApp now. Your items are held for you until payment is confirmed.',
+    '{{customer_name}}, {{order_number}}, {{total}}'
+  )
+on conflict (key) do nothing;
+
+-- ============================================================================
+-- CUSTOMER ACCOUNTS (optional, passwordless: the customer logs in with a code
+-- emailed to them). A logged-in customer is NOT the owner (see is_owner()).
+-- ============================================================================
+
+-- Which account placed the order (null for guests). Set by place_order().
+alter table orders add column if not exists user_id uuid references auth.users(id) on delete set null;
+create index if not exists orders_user_id_idx on orders(user_id);
+
+-- A customer sees their OWN orders: ones placed while logged in, plus ones
+-- placed as a guest with the same email address they just verified.
+drop policy if exists "orders customer read own" on orders;
+create policy "orders customer read own"
+  on orders for select to authenticated
+  using (
+    user_id = auth.uid()
+    or lower(customer_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+  );
+
+drop policy if exists "order_items customer read own" on order_items;
+create policy "order_items customer read own"
+  on order_items for select to authenticated
+  using (
+    exists (
+      select 1 from orders o
+      where o.id = order_items.order_id
+        and (
+          o.user_id = auth.uid()
+          or lower(o.customer_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+        )
+    )
+  );
+
+-- Saved name and phone, one row per account.
+create table if not exists customer_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  name text,
+  phone text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists customer_profiles_set_updated_at on customer_profiles;
+create trigger customer_profiles_set_updated_at
+  before update on customer_profiles
+  for each row execute function set_updated_at();
+
+alter table customer_profiles enable row level security;
+drop policy if exists "customer_profiles own" on customer_profiles;
+create policy "customer_profiles own"
+  on customer_profiles for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+drop policy if exists "customer_profiles owner read" on customer_profiles;
+create policy "customer_profiles owner read"
+  on customer_profiles for select to authenticated using (is_owner());
+
+-- Saved delivery addresses (home, office...).
+create table if not exists customer_addresses (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  label text not null default 'Home',
+  address_text text not null,
+  lat numeric,
+  lng numeric,
+  is_default boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists customer_addresses_user_idx on customer_addresses(user_id);
+
+alter table customer_addresses enable row level security;
+drop policy if exists "customer_addresses own" on customer_addresses;
+create policy "customer_addresses own"
+  on customer_addresses for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+drop policy if exists "customer_addresses owner read" on customer_addresses;
+create policy "customer_addresses owner read"
+  on customer_addresses for select to authenticated using (is_owner());
+
+-- "Delete my saved details": removes the profile and addresses and detaches
+-- the account from past orders (the orders themselves stay for your records).
+create or replace function delete_my_account_data()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'NOT_ALLOWED';
+  end if;
+  delete from customer_addresses where user_id = auth.uid();
+  delete from customer_profiles where user_id = auth.uid();
+  update orders set user_id = null where user_id = auth.uid();
+end;
+$$;
+
+revoke all on function delete_my_account_data() from public, anon;
+grant execute on function delete_my_account_data() to authenticated;
+
+-- A guest who just placed an order and then signs in can attach THAT order to
+-- their new account. It needs the order number AND the phone number used on
+-- it (the same two secrets the public tracking page asks for).
+create or replace function claim_order(p_order_number text, p_phone text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer;
+begin
+  if auth.uid() is null then
+    raise exception 'NOT_ALLOWED';
+  end if;
+  update orders
+    set user_id = auth.uid()
+    where order_number = p_order_number
+      and customer_phone = p_phone
+      and user_id is null;
+  get diagnostics v_count = row_count;
+  return v_count > 0;
+end;
+$$;
+
+revoke all on function claim_order(text, text) from public, anon;
+grant execute on function claim_order(text, text) to authenticated;

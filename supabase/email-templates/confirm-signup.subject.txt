@@ -1,0 +1,1 @@
+Welcome to Edelicacies. Your code is {{ .Token }}

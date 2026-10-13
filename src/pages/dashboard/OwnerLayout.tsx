@@ -14,6 +14,7 @@ import {
   IconStar,
   IconBell,
   IconMail,
+  IconInbox,
   IconSend,
   IconSliders,
   IconMore,
@@ -34,6 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard/discount-codes', label: 'Discount Codes', icon: IconTag },
   { to: '/dashboard/reviews', label: 'Reviews', icon: IconStar },
   { to: '/dashboard/subscribers', label: 'Subscribers', icon: IconBell },
+  { to: '/dashboard/enquiries', label: 'Enquiries', icon: IconInbox },
   { to: '/dashboard/messaging', label: 'Messaging', icon: IconSend },
   { to: '/dashboard/email-templates', label: 'Email Templates', icon: IconMail },
   { to: '/dashboard/settings', label: 'Settings', icon: IconSliders },
@@ -42,7 +44,7 @@ const NAV_ITEMS: NavItem[] = [
 const PRIMARY_MOBILE_PATHS = ['/dashboard/orders', '/dashboard/daily-menu', '/dashboard/menu-items']
 
 export function OwnerLayout() {
-  const { session, loading, signOut } = useAuth()
+  const { session, loading, isOwner, signOut } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const [moreOpen, setMoreOpen] = useState(false)
@@ -52,6 +54,26 @@ export function OwnerLayout() {
     return <div className="flex min-h-screen items-center justify-center text-ink-400">Loading…</div>
   }
   if (!session) return <Navigate to="/dashboard/login" replace />
+  if (isOwner === null) {
+    return <div className="flex min-h-screen items-center justify-center text-ink-400">Loading…</div>
+  }
+  if (!isOwner) {
+    // Logged in, but as a customer: the dashboard is not for them.
+    return (
+      <div className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center px-4 text-center">
+        <h1 className="text-xl font-semibold text-ink-800">This is the owner area</h1>
+        <p className="mt-2 text-[14px] text-ink-400">
+          You're signed in with a customer account, which can't open the dashboard.
+        </p>
+        <button
+          onClick={() => void signOut().then(() => navigate('/'))}
+          className="mt-5 min-h-11 rounded-full bg-ink-900 px-5 text-[14px] font-semibold text-white"
+        >
+          Sign out and go to the site
+        </button>
+      </div>
+    )
+  }
 
   const primaryItems = NAV_ITEMS.filter((item) => PRIMARY_MOBILE_PATHS.includes(item.to))
   const moreItems = NAV_ITEMS.filter((item) => !PRIMARY_MOBILE_PATHS.includes(item.to))

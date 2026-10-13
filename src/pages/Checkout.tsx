@@ -10,6 +10,15 @@ import { formatNaira } from '../lib/format'
 import { buildWhatsAppOrderMessage } from '../lib/whatsappOrderMessage'
 import { waLink } from '../lib/whatsapp'
 import { LocationPicker } from '../components/checkout/LocationPicker'
+import { clearSavedDetails, loadSavedDetails, saveDetails } from '../lib/savedDetails'
+import { useAuth } from '../context/AuthContext'
+import {
+  fetchAddresses,
+  fetchProfile,
+  saveAddressIfNew,
+  saveProfile,
+  type AddressRow,
+} from '../lib/api/account'
 import { Button } from '../components/ui/Button'
 import type { DeliveryBandRow, PickupWindowRow } from '../types/db'
 
@@ -32,12 +41,23 @@ export function Checkout() {
   const [bands, setBands] = useState<DeliveryBandRow[]>([])
   const [pickupWindows, setPickupWindows] = useState<PickupWindowRow[]>([])
 
-  const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
-  const [email, setEmail] = useState('')
-  const [deliveryType, setDeliveryType] = useState<DeliveryType>('dispatch')
-  const [addressText, setAddressText] = useState('')
-  const [pin, setPin] = useState({ lat: settings.shop_location.lat, lng: settings.shop_location.lng })
+  // Details this customer chose to remember on this device last time.
+  const { session, isOwner } = useAuth()
+  const customerId = session && isOwner === false ? session.user.id : null
+  const customerEmail = session?.user.email ?? ''
+  const [savedAddresses, setSavedAddresses] = useState<AddressRow[]>([])
+  const [saved, setSaved] = useState(() => loadSavedDetails())
+  const [rememberMe, setRememberMe] = useState(true)
+
+  const [name, setName] = useState(saved?.name ?? '')
+  const [phone, setPhone] = useState(saved?.phone ?? '')
+  const [email, setEmail] = useState(saved?.email ?? '')
+  const [deliveryType, setDeliveryType] = useState<DeliveryType>(saved?.deliveryType ?? 'dispatch')
+  const [addressText, setAddressText] = useState(saved?.addressText ?? '')
+  const [pin, setPin] = useState({
+    lat: saved?.lat ?? settings.shop_location.lat,
+    lng: saved?.lng ?? settings.shop_location.lng,
+  })
   const [pickupWindowId, setPickupWindowId] = useState('')
   const [note, setNote] = useState('')
   const [discountInput, setDiscountInput] = useState('')
@@ -66,8 +86,37 @@ export function Checkout() {
   }, [])
 
   useEffect(() => {
-    setPin({ lat: settings.shop_location.lat, lng: settings.shop_location.lng })
+    // Settings arrive after the page opens; only fall back to the shop
+    // location when the customer has no remembered pin.
+    if (saved?.lat == null || saved?.lng == null) {
+      setPin({ lat: settings.shop_location.lat, lng: settings.shop_location.lng })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.shop_location.lat, settings.shop_location.lng])
+
+  // A signed-in customer: fill in their profile and offer their saved addresses.
+  useEffect(() => {
+    if (!customerId) return
+    let cancelled = false
+    Promise.all([fetchProfile(customerId), fetchAddresses()])
+      .then(([profile, addresses]) => {
+        if (cancelled) return
+        setSavedAddresses(addresses)
+        setName((n) => n || profile?.name || '')
+        setPhone((p) => p || profile?.phone || '')
+        setEmail((e) => e || customerEmail)
+        const preferred = addresses.find((a) => a.is_default) ?? addresses[0]
+        if (preferred && !saved?.addressText) {
+          setAddressText((t) => t || preferred.address_text)
+          if (preferred.lat != null && preferred.lng != null) setPin({ lat: preferred.lat, lng: preferred.lng })
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId])
 
   const quote = useMemo(() => {
     if (deliveryType !== 'dispatch' || bands.length === 0) return null
@@ -172,6 +221,32 @@ export function Checkout() {
 
       void sendOrderEmail(result.order_id, 'new_order')
 
+      // Signed-in customers: keep their profile and addresses up to date.
+      if (customerId) {
+        void saveProfile(customerId, { name, phone }).catch(() => undefined)
+        if (deliveryType === 'dispatch') {
+          void saveAddressIfNew(
+            customerId,
+            { addressText, lat: pin.lat, lng: pin.lng },
+            savedAddresses,
+          ).catch(() => undefined)
+        }
+      }
+
+      if (rememberMe) {
+        saveDetails({
+          name: name.trim(),
+          phone: phone.trim(),
+          email: email.trim(),
+          deliveryType,
+          addressText: addressText.trim(),
+          lat: deliveryType === 'dispatch' ? pin.lat : saved?.lat ?? null,
+          lng: deliveryType === 'dispatch' ? pin.lng : saved?.lng ?? null,
+        })
+      } else {
+        clearSavedDetails()
+      }
+
       const pickupLabel = pickupWindows.find((w) => w.id === pickupWindowId)?.label ?? null
       const message = buildWhatsAppOrderMessage({
         orderNumber: result.order_number,
@@ -215,6 +290,27 @@ export function Checkout() {
 
       <section className="mt-5 flex flex-col gap-3">
         <h2 className="text-[13px] font-semibold uppercase tracking-wide text-ink-400">Your details</h2>
+        {saved && (
+          <p className="flex flex-wrap items-center gap-x-2 rounded-xl bg-brand-50 px-3 py-2.5 text-[13px] text-brand-700">
+            <span className="font-semibold">Welcome back, {saved.name.split(' ')[0]}!</span>
+            <span>We filled in your details from last time.</span>
+            <button
+              type="button"
+              className="font-semibold underline"
+              onClick={() => {
+                clearSavedDetails()
+                setSaved(null)
+                setName('')
+                setPhone('')
+                setEmail('')
+                setAddressText('')
+                setDeliveryType('dispatch')
+              }}
+            >
+              Not you? Clear
+            </button>
+          </p>
+        )}
         <div>
           <input
             ref={nameRef}
@@ -258,6 +354,20 @@ export function Checkout() {
             Optional — but add it so we can also send you order and delivery updates by email.
           </p>
         </div>
+        <label className="flex items-start gap-2.5 text-[13px] text-ink-600">
+          <input
+            type="checkbox"
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+            className="mt-0.5 h-5 w-5 shrink-0 accent-brand-500"
+          />
+          <span>
+            Remember my details on this device for next time
+            <span className="block text-[12px] text-ink-400">
+              Saved only in this browser, so you don't have to type them again.
+            </span>
+          </span>
+        </label>
       </section>
 
       <section className="mt-6">
@@ -281,6 +391,33 @@ export function Checkout() {
 
         {deliveryType === 'dispatch' ? (
           <div className="mt-4 flex flex-col gap-3">
+            {savedAddresses.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-ink-400">
+                  Your saved addresses
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {savedAddresses.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => {
+                        setAddressText(a.address_text)
+                        if (a.lat != null && a.lng != null) setPin({ lat: a.lat, lng: a.lng })
+                        setFieldErrors((f) => ({ ...f, address: undefined }))
+                      }}
+                      className={`min-h-10 rounded-full px-4 text-[13px] font-semibold ring-1 ${
+                        addressText === a.address_text
+                          ? 'bg-ink-900 text-white ring-ink-900'
+                          : 'bg-white text-ink-700 ring-ink-100'
+                      }`}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <LocationPicker lat={pin.lat} lng={pin.lng} onChange={(lat, lng) => setPin({ lat, lng })} />
             <div>
               <textarea

@@ -121,6 +121,14 @@ Deno.serve(async (req) => {
         headers: CORS_HEADERS,
       })
     }
+    // Customers can log in too, so "logged in" is not enough: must be the owner.
+    const { data: isOwner } = await callerClient.rpc('is_owner')
+    if (isOwner !== true) {
+      return new Response(JSON.stringify({ error: 'Only the owner can do this' }), {
+        status: 403,
+        headers: CORS_HEADERS,
+      })
+    }
 
     const { menuDate } = await req.json()
     if (!menuDate) {
