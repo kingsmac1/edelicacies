@@ -4,7 +4,7 @@ import { supabase } from './supabase'
 // function shouldn't block a customer's checkout or the owner's dashboard
 // action that triggered it.
 
-export async function sendOrderEmail(orderId: string, event: 'new_order' | 'stage_change'): Promise<void> {
+export async function sendOrderEmail(orderId: string, event: 'new_order' | 'stage_change' | 'order_approved'): Promise<void> {
   const { error } = await supabase.functions.invoke('send-order-email', { body: { orderId, event } })
   if (error) console.error('send-order-email failed', error)
 }

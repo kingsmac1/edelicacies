@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { fetchOrderItems, fetchOrders, setOrderStatus } from '../../lib/api/orders'
+import { approveOrder, fetchOrderItems, fetchOrders, setOrderStatus } from '../../lib/api/orders'
+import { phoneToWhatsAppNumber } from '../../lib/api/enquiries'
 import { sendOrderEmail } from '../../lib/edgeFunctions'
 import { formatDateLong, formatNaira } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
@@ -14,6 +15,7 @@ const STATUS_FLOW: OrderStatus[] = [
 ]
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
+  pending_approval: 'Waiting for approval',
   awaiting_payment: 'Awaiting payment',
   paid: 'Paid',
   preparing: 'Preparing',
@@ -24,7 +26,7 @@ const STATUS_LABELS: Record<OrderStatus, string> = {
 }
 
 function nextStatus(order: OrderRow): OrderStatus | null {
-  if (order.status === 'cancelled' || order.status === 'delivered') return null
+  if (order.status === 'cancelled' || order.status === 'delivered' || order.status === 'pending_approval') return null
   if (order.status === 'paid') {
     return order.delivery_type === 'pickup' ? 'ready_for_pickup' : 'out_for_delivery'
   }
@@ -41,6 +43,7 @@ export function OwnerOrders() {
   const [items, setItems] = useState<Record<string, OrderItemRow[]>>({})
   const [feeDraft, setFeeDraft] = useState<Record<string, string>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -84,6 +87,20 @@ export function OwnerOrders() {
     }
   }
 
+  async function handleApprove(order: OrderRow) {
+    setBusyId(order.id)
+    setError(null)
+    try {
+      await approveOrder(order.id)
+      void sendOrderEmail(order.id, 'order_approved')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not approve this order.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   async function handleCancel(order: OrderRow) {
     setBusyId(order.id)
     try {
@@ -96,13 +113,27 @@ export function OwnerOrders() {
   }
 
   const filtered = orders.filter((o) => statusFilter === 'all' || o.status === statusFilter)
+  const pendingCount = orders.filter((o) => o.status === 'pending_approval').length
 
   return (
     <div>
       <h1 className="text-xl font-semibold text-ink-800">Orders</h1>
 
+      {pendingCount > 0 && (
+        <button
+          onClick={() => setStatusFilter('pending_approval')}
+          className="mt-3 flex w-full items-center justify-between gap-3 rounded-2xl bg-brand-50 px-4 py-3 text-left ring-1 ring-brand-200"
+        >
+          <span className="text-[14px] font-semibold text-brand-700">
+            {pendingCount} order{pendingCount === 1 ? '' : 's'} from the chat assistant waiting for your approval
+          </span>
+          <span className="text-[13px] font-semibold text-brand-600">Review →</span>
+        </button>
+      )}
+      {error && <p className="mt-3 text-[14px] font-medium text-brand-600">{error}</p>}
+
       <div className="no-scrollbar mt-4 flex gap-2 overflow-x-auto">
-        {(['all', ...STATUS_FLOW, 'ready_for_pickup', 'cancelled'] as const).map((s) => (
+        {(['all', 'pending_approval', ...STATUS_FLOW, 'ready_for_pickup', 'cancelled'] as const).map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -130,6 +161,11 @@ export function OwnerOrders() {
                   <div className="min-w-0">
                     <p className="truncate text-[15px] font-semibold text-ink-800">
                       {order.order_number} · {order.customer_name}
+                      {order.source === 'chat' && (
+                        <span className="ml-2 rounded-full bg-sky-50 px-2 py-0.5 align-middle text-[11px] font-semibold text-sky-700">
+                          Chat order
+                        </span>
+                      )}
                     </p>
                     <p className="text-[13px] text-ink-400">
                       {order.customer_phone} · {formatDateLong(order.menu_date)} ·{' '}
@@ -155,7 +191,10 @@ export function OwnerOrders() {
                       ))}
                     </div>
                     {order.note && <p className="mt-2 text-[13px] italic text-ink-500">Note: {order.note}</p>}
-                    {order.delivery_type === 'dispatch' && order.address_text && (
+                    {order.delivery_type === 'dispatch' && order.address_text && order.address_lat == null && (
+                      <p className="mt-2 text-[13px] text-ink-500">Address: {order.address_text}</p>
+                    )}
+                    {order.delivery_type === 'dispatch' && order.address_text && order.address_lat != null && (
                       <p className="mt-2 text-[13px] text-ink-500">
                         {order.address_text}
                         {order.address_lat != null && (
@@ -176,7 +215,35 @@ export function OwnerOrders() {
                   </div>
                 )}
 
-                {order.status !== 'cancelled' && order.status !== 'delivered' && (
+                {order.status === 'pending_approval' && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3">
+                    <Button size="md" onClick={() => void handleApprove(order)} disabled={busyId === order.id}>
+                      Approve order
+                    </Button>
+                    <Button
+                      size="md"
+                      variant="ghost"
+                      onClick={() => void handleCancel(order)}
+                      disabled={busyId === order.id}
+                    >
+                      Reject
+                    </Button>
+                    {phoneToWhatsAppNumber(order.customer_phone) && (
+                      <a
+                        href={`https://wa.me/${phoneToWhatsAppNumber(order.customer_phone)}?text=${encodeURIComponent(
+                          `Hi ${order.customer_name}, this is Edelicacies about your order ${order.order_number}.`,
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-11 rounded-full bg-[#25D366] px-4 py-3 text-[14px] font-semibold text-white"
+                      >
+                        WhatsApp customer
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {order.status !== 'cancelled' && order.status !== 'delivered' && order.status !== 'pending_approval' && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3">
                     {order.status === 'awaiting_payment' && order.delivery_type === 'dispatch' && (
                       <input

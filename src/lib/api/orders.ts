@@ -126,3 +126,9 @@ export async function setOrderStatus(
   })
   if (error) throw error
 }
+
+// Owner approves an order that came in through the chat assistant.
+export async function approveOrder(orderId: string): Promise<void> {
+  const { error } = await supabase.rpc('approve_order', { p_order_id: orderId })
+  if (error) throw error
+}

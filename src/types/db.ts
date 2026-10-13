@@ -91,6 +91,7 @@ export interface SettingsMap {
 }
 
 export type OrderStatus =
+  | 'pending_approval'
   | 'awaiting_payment'
   | 'paid'
   | 'preparing'
@@ -133,6 +134,7 @@ export interface OrderRow {
   discount_amount: number
   total: number
   status: OrderStatus
+  source: 'website' | 'chat'
   note: string | null
   created_at: string
   updated_at: string

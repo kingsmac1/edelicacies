@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button'
 import type { OrderStatus } from '../types/db'
 
 const STAGES: { status: OrderStatus; label: string }[] = [
+  { status: 'pending_approval', label: 'Order received' },
   { status: 'awaiting_payment', label: 'Awaiting payment' },
   { status: 'paid', label: 'Paid' },
   { status: 'preparing', label: 'Preparing' },
@@ -41,7 +42,7 @@ export function Track() {
 
   const stageIndex = order
     ? order.status === 'ready_for_pickup'
-      ? 3
+      ? 4
       : order.status === 'cancelled'
         ? -1
         : STAGES.findIndex((s) => s.status === order.status)
@@ -99,6 +100,12 @@ export function Track() {
                 </div>
               ))}
             </div>
+          )}
+
+          {order.status === 'pending_approval' && (
+            <p className="mt-4 rounded-xl bg-brand-50 p-3 text-[14px] font-medium text-brand-700">
+              Our team is reviewing your order and will message you on WhatsApp shortly with the payment details.
+            </p>
           )}
 
           <div className="mt-4 flex flex-col gap-1 border-t border-ink-100 pt-3 text-[14px]">

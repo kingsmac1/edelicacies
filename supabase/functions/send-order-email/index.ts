@@ -35,6 +35,7 @@ function errorMessage(err: unknown): string {
 }
 
 const STATUS_LABELS: Record<string, string> = {
+  pending_approval: 'Waiting for approval',
   awaiting_payment: 'Awaiting payment',
   paid: 'Paid',
   preparing: 'Preparing your order',
@@ -191,8 +192,18 @@ Deno.serve(async (req) => {
       // An order for a date after today is a pre-order: different wording,
       // because the meal is cooked on that day, not straight away.
       const isPreorder = order.menu_date > lagosToday()
-      const customerKey = isPreorder ? 'new_order_customer_preorder' : 'new_order_customer'
-      const ownerKey = isPreorder ? 'new_order_owner_preorder' : 'new_order_owner'
+      // Orders placed through the chat assistant wait for the owner's approval.
+      const isPending = order.status === 'pending_approval'
+      const customerKey = isPending
+        ? 'new_order_customer_pending'
+        : isPreorder
+          ? 'new_order_customer_preorder'
+          : 'new_order_customer'
+      const ownerKey = isPending
+        ? 'new_order_owner_pending'
+        : isPreorder
+          ? 'new_order_owner_preorder'
+          : 'new_order_owner'
 
       const customerVars = {
         customer_name: order.customer_name,
@@ -203,10 +214,14 @@ Deno.serve(async (req) => {
       const customerTmpl = await getTemplate(
         supabase,
         customerKey,
-        isPreorder
-          ? 'Pre-order {{order_number}} received for {{menu_date}} — Edelicacies'
-          : 'Order {{order_number}} received — Edelicacies',
-        isPreorder
+        isPending
+          ? 'We received your order {{order_number}} — Edelicacies'
+          : isPreorder
+            ? 'Pre-order {{order_number}} received for {{menu_date}} — Edelicacies'
+            : 'Order {{order_number}} received — Edelicacies',
+        isPending
+          ? "Thanks, {{customer_name}}! We've received your order {{order_number}} for {{menu_date}}. Our team is reviewing it and will message you on WhatsApp shortly with the payment details. Your items are being held for you."
+          : isPreorder
           ? "Thanks, {{customer_name}}! We've received your pre-order {{order_number}} for {{menu_date}}. Your meal will be prepared fresh on that day, and delivery starts once it is ready. We'll email you when your rider is on the way. Payment is confirmed on WhatsApp — we'll message you shortly to sort that out."
           : "Thanks, {{customer_name}}! We've received your order {{order_number}} for {{menu_date}}. Payment is confirmed on WhatsApp — we'll message you shortly to sort that out.",
       )
@@ -216,7 +231,9 @@ Deno.serve(async (req) => {
         emailShell(`
           ${paragraphs(render(customerTmpl.body, customerVars))}
           ${itemsTable(items ?? [], images)}
-          <p style="font-weight:600;">Total: ${formatNaira(order.total)}</p>
+          <p style="font-weight:600;">Total: ${formatNaira(order.total)}${
+            isPending && order.delivery_type === 'dispatch' ? ' (delivery fee to be confirmed by our team)' : ''
+          }</p>
           ${trackingLine}
         `),
       )
@@ -239,12 +256,16 @@ Deno.serve(async (req) => {
         const ownerTmpl = await getTemplate(
           supabase,
           ownerKey,
-          isPreorder
-            ? 'New PRE-ORDER {{order_number}} for {{menu_date}} — {{total}}'
-            : 'New order {{order_number}} — {{total}}',
-          isPreorder
-            ? 'New pre-order for {{menu_date}} from {{customer_name}} ({{customer_phone}}).'
-            : 'New order from {{customer_name}} ({{customer_phone}}).',
+          isPending
+            ? 'Order {{order_number}} is waiting for your approval — {{total}}'
+            : isPreorder
+              ? 'New PRE-ORDER {{order_number}} for {{menu_date}} — {{total}}'
+              : 'New order {{order_number}} — {{total}}',
+          isPending
+            ? 'A customer placed order {{order_number}} through the chat assistant: {{customer_name}} ({{customer_phone}}). Open Dashboard → Orders to approve or reject it.'
+            : isPreorder
+              ? 'New pre-order for {{menu_date}} from {{customer_name}} ({{customer_phone}}).'
+              : 'New order from {{customer_name}} ({{customer_phone}}).',
         )
         await sendEmail(
           ownerEmail,
@@ -257,6 +278,28 @@ Deno.serve(async (req) => {
           `),
         )
       }
+    } else if (event === 'order_approved') {
+      const vars = {
+        customer_name: order.customer_name,
+        order_number: order.order_number,
+        total: formatNaira(order.total),
+      }
+      const tmpl = await getTemplate(
+        supabase,
+        'order_approved',
+        'Your order {{order_number}} is approved — Edelicacies',
+        'Hi {{customer_name}}, good news! Your order {{order_number}} has been approved. Our team will send you the payment details on WhatsApp now. Your items are held for you until payment is confirmed.',
+      )
+      await sendEmail(
+        order.customer_email,
+        render(tmpl.subject, vars),
+        emailShell(`
+          ${paragraphs(render(tmpl.body, vars))}
+          ${itemsTable(items ?? [], images)}
+          <p style="font-weight:600;">Total: ${formatNaira(order.total)}</p>
+          ${trackingLine}
+        `),
+      )
     } else if (event === 'stage_change') {
       const label = STATUS_LABELS[order.status] ?? order.status
       const vars = {

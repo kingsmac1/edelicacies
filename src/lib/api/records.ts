@@ -69,6 +69,7 @@ export async function fetchOnlinePaidOrders(): Promise<OrderRow[]> {
   const { data, error } = await supabase
     .from('orders')
     .select('*')
+    .neq('status', 'pending_approval')
     .neq('status', 'awaiting_payment')
     .neq('status', 'cancelled')
     .order('created_at', { ascending: false })
