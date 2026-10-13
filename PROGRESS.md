@@ -1,8 +1,8 @@
 # PROGRESS — Edelicacies Menu Assistant
 
 ## Current position
-- **Phase:** 3 complete (done-when passed 2026-10-12), waiting for "yes, move on" to Phase 4
-- **Current item:** Phase 4 not formally started. Done inside Phase 4 scope: tools `send_enquiry` and `place_order`, owner approval flow, owner alert emails. Takeover inbox + automatic handoff + owner alert emails are built (need SQL + chat redeploy + site deploy). Still to do: Phase 4 Learn quiz, MCP bonus, Phase 4 done-when live test
+- **Phase:** 5 (Safe for real customers): spending cap, usage log, rate limits, AI Monitor built. Next: OpenRouter key limit, 20-question test suite, quiz
+- **Current item:** Phase 4 not formally started. Done inside Phase 4 scope: tools `send_enquiry` and `place_order`, owner approval flow, owner alert emails. Takeover inbox + automatic handoff + owner alert emails are built (need SQL + chat redeploy + site deploy). Done-when live test PASSED 2026-10-13. Still to do: Phase 4 Learn quiz, MCP bonus
 
 ## Checklist
 
@@ -42,23 +42,23 @@
 - [x] Learn: chunking + why RAG reduces made-up answers (2026-10-12: explained with Ewet 0.945 vs CEO 0.767; follow-up limit shown with 'how long does that take?' after refunds)
 
 ### Phase 4: Agents and MCP
-- [ ] Tools: check menu, draft order
-- [ ] Drafted orders wait for owner approval
-- [ ] Customer confirmation only after approval
-- [ ] Owner takeover mode (AI / Owner)
-- [ ] Dashboard inbox with Take over / Hand back
-- [ ] Automatic handoff
-- [ ] Owner alert (email)
-- [ ] Bonus: MCP
-- [ ] Learn: tools · agents · MCP · human approval · handoff
+- [x] Tools: check menu, draft order (`place_order`, `send_enquiry`)
+- [x] Drafted orders wait for owner approval
+- [x] Customer confirmation only after approval
+- [x] Owner takeover mode (AI / Owner)
+- [x] Dashboard inbox with Take over / Hand back
+- [x] Automatic handoff
+- [x] Owner alert (email)
+- [x] Bonus: MCP (2026-10-13: concept covered; Macauley already uses Supabase MCP on his other projects, so not re-connected here. Remember: read_only + project_ref)
+- [x] Learn: tools · agents · MCP · human approval · handoff (2026-10-13: quiz passed)
 
 ### Phase 5: Safe for real customers
-- [ ] RLS for customer orders
-- [ ] Daily spending cap
-- [ ] Rate limiting
-- [ ] Conversation log
-- [ ] 20 test questions
-- [ ] Learn: RLS · prompt injection · observability
+- [x] RLS for customer orders (2026-10-13: is_owner + own-order policies; tested in a real Postgres engine)
+- [~] Daily spending cap (in-app cap built; OpenRouter key limit still to set by owner)
+- [x] Rate limiting (per-visitor hash, per-chat, global)
+- [x] Conversation log (conversations, chat_messages, Inbox, ai_usage, AI Monitor)
+- [x] 20 test questions (2026-10-13: 18/20 first run; both failures were over-strict TEST rules ("not sure" / "nothing is free"), fixed, re-run 2/2; run with `npm run test:assistant`)
+- [~] Learn: RLS · prompt injection · observability (quiz 2026-10-13: Q1 confused RLS with prompt injection, re-explained; Q2 half right (least power); Q3 right)
 
 ### Phase 6: WhatsApp and owner takeover from the phone
 - [ ] Pre-checks (Business app version, Coexistence for +234, current pricing)
@@ -108,10 +108,15 @@
 | 2026-10-12 | Phase 3 item 1 quiz: why short notes, where delivery fee comes from, unknown area | Q1/Q3 correct; Q2 needed one re-ask (bands = list, exact fee = checkout), then correct |
 | 2026-10-12 | Phase 3 items 2-4 quiz: embedding, service role key, similarity threshold, why 3-4 notes, model glitch | Q1 (embedding) good; service role needed 'bypasses RLS' detail; threshold direction confused (0.5 = less unsure), fixed with CEO example |
 | 2026-10-12 | Phase 3 explain-back: chunking, RAG vs made-up answers, follow-up limit | Q1/Q2 ok; Q3 predicted bot would 'understand' follow-up; real test showed search misfires on vague follow-ups, safe answer saved by history + rules |
+| 2026-10-13 | Phase 4 'Done when' live test: order -> approval -> confirmation; takeover, reply, hand back; 'speak to a person' auto-handoff + alert | Passed (confirmed by Macauley) |
+| 2026-10-13 | Phase 4 Learn quiz: tools (AI asks, code decides), human approval, why handoff check lives in code | Q2 correct; Q1 right idea (refined: AI never touches DB); Q3 right instinct, missed 'reliability' reason (refined) |
+| 2026-10-13 | Phase 5 quiz: RLS, prompt injection, observability | Q3 right; Q2 half right; Q1 mixed up RLS with prompt injection (re-explained: database lock vs tricking the bot) |
 | 2026-10-11 | Phase 0 quiz: empty menu state, .env + .gitignore, website vs Edge Function | 3/3 correct |
 | 2026-10-11 | Item 1 quiz: OpenRouter, secret name, free-tier limits | 3/3 correct |
 
 ## Topics to revisit
+- RLS vs prompt injection: RLS protects the DATABASE even when the assistant is bypassed; prompt injection is tricking the assistant. Defence = least power + owner-only DB rules, not clever prompts
+- Rule of thumb: anything that MUST always be true belongs in code/database, not in a prompt (handoff switch, approvals, prices)
 - Similarity threshold direction: LOWER bar = bot is LESS often unsure (more unrelated notes get in); HIGHER bar = more 'not sure'
 - Service role key = master key that bypasses RLS, server only
 - daily_menu_slots is the LINK table (day + dish/size); describe its role in own words
@@ -149,6 +154,11 @@
   10. PLAN, NOT BUILT (customer accounts, requested 2026-10-12): passwordless email-code login via Supabase Auth, optional prompt after first order, account page (details, saved addresses, order history, track, reorder). HARD PREREQUISITE: today every "to authenticated" policy (44 of them), `set_order_status`, `approve_order`, and Edge fns `notify-subscribers` + `send-broadcast` treat ANY logged-in user as the owner. Before customers can log in, add `is_owner()` (owners table or app_metadata role) and rewrite all of those. Also: configure custom SMTP (Resend) in Supabase Auth, link `orders.customer_id`, chat bot can use the logged-in profile.
   11. BUILT + TESTED (2026-10-12): SECURITY HARDENING then CUSTOMER ACCOUNTS. (a) `owners` table + `is_owner()`; 42 owner policies rewritten from `to authenticated using (true)` to `is_owner()`; public `to anon` policies now also cover `authenticated`; `set_order_status`/`approve_order` check owner-or-service-role (FOUND: set_order_status was callable by anonymous users, now closed); `notify-subscribers`/`send-broadcast` require owner; dashboard guard uses `isOwner`. (b) Accounts: passwordless email code (Supabase Auth OTP), `orders.user_id` (set by place_order via auth.uid()), policies for own orders by user_id or verified email, `customer_profiles`, `customer_addresses`, `delete_my_account_data()`, `claim_order()`. Site: /account (orders, track, order again, details, saved addresses), header icon, signup prompt on order-confirmation, checkout prefill + saved address chips. Tested in real Postgres (PGlite) with Supabase default grants imitated: old schema 11/26 checks, hardened 26/26, accounts 24/24. TO DO BY OWNER: run SQL, check `owners` row = your email, configure Supabase Auth (email OTP template with {{ .Token }}, custom SMTP via Resend). Not done yet: chat bot recognising logged-in customer; WhatsApp login code (Phase 6); marketing opt-out toggle on account page.
   12. BUILT + TESTED (2026-10-13): PHASE 4 TAKEOVER. Tables `conversations` (mode ai|owner, access_token, handoff_reason, owner_unread...) + `chat_messages`; owner-only RLS; fns `owner_send_message` (also takes over) and `set_conversation_mode`. Chat fn now: saves every message, returns secret token to the browser, `poll` action, builds AI context from the SAVED chat (browser history ignored), NEVER calls the AI in owner mode, 3h owner-silence auto-resume, 40 msgs/hour/chat + 60 new chats/hour caps, legacy path kept. Auto handoff rules (code, not AI): asks for a person; complaint (not hypothetical/policy questions); catering/large; "not sure" twice. Owner alert email (+ throttled 'customer replied' email, 10 min). Widget: persists chat, polls 5s, owner/system bubbles, mode header. Dashboard: /dashboard/inbox (list, filters, thread, Take over, Hand back, reply) + unread badge in sidebar/More. Tests: db 19/19, function 29/29 on stubs, widget e2e in browser; security suites still 26/26 + 24/24. WhatsApp owner alert comes in Phase 6.
+  13. BUILT + TESTED (2026-10-13): PHASE 5 part 1. `ai_usage` log (tokens, cost, latency, ok/error) written by chat fn; DAILY CAP in code: setting `ai_daily_budget` {usd, max_calls}, over limit -> assistant pauses, WhatsApp button, owner emailed once/day; per-visitor limits via one-way IP hash (8 new chats/hour, 30 msgs/10 min), raw IP never stored; `conversations.ever_handed_off`; production bug fixed: background emails (budget alert, order email) are now AWAITED because the platform can stop a function after it replies. Dashboard: /dashboard/ai-monitor (allowance bars, answers, cost, tokens, avg reply time, errors, handoffs, chat orders, enquiries, questions it couldn't answer, slow/failed calls). Tests: usage/cap/limits 15/15, earlier chat 29/29, DB 25/25 + security 26/26 + accounts 24/24. STILL TO DO in Phase 5: OpenRouter key daily limit (owner, in OpenRouter dashboard), the 20-question test suite incl. prompt injection, Learn quiz, done-when.
+  14. BUILT (2026-10-13): 20-question assistant test suite: `tests/assistant/questions.mjs` + runner `npm run test:assistant [ids]`; rules verified to pass a good answer and catch a bad one; report in tests/assistant/last-report.md (gitignored). Visitor limits now configurable via setting `chat_limits` (raise for test day: 40 / 60, then restore 8 / 30). WAITING: Macauley to deploy chat fn, raise chat_limits, then run suite; then fix failures and quiz.
+  15. RESULT (2026-10-13): assistant test suite 20/20. Lesson: a failing test can be a bad test; read every failure. Minor wording notes for later: bot says "listed above" (hints at a prompt); a fake 'refund me for an order I never placed' is handed to the owner as a complaint (acceptable). TO DO: restore `chat_limits` to 8/30 after test day; add Macauley's own tricky questions as #21+; Phase 5 Learn quiz; confirm AI Monitor shows yesterday's numbers tomorrow.
+  16. BUILT + TESTED (2026-10-13): (a) Inbox: "Delete chat" + "Delete chats older than 30 days" (messages go with the chat; gaps and cost log survive). (b) `knowledge_gaps` table: "Questions it couldn't answer" now saved for 14 days (was recomputed per tab, so it vanished when the range tab changed), grouped with counts, buttons "I added a note" / Delete / Clear all, nightly pg_cron clean-up of expired rows, one-time catch-up from existing chats (never resurrects deleted rows). Tests: gaps/DB 16/16, function 16/16 + 29/29, security 26/26 + 24/24 + 25/25.
+  PHASE 5 STATE when Macauley asked to move on: 20/20 tests, rate limits, cap, AI Monitor, RLS done. Carry-overs: re-ask Q1 (RLS = database lock, not chat tricks), restore `chat_limits` to 8/30, check AI Monitor "Yesterday" tomorrow, add own tests #21+.
 - New Supabase objects 2026-10-12: tables `email_campaigns`; column `customers.unsubscribed`; fns `unsubscribe_customer`, `submit_public_review`; bucket `email-images`; setting `email_daily_limit`; Edge fn `send-broadcast`.
 - Embedding model chosen: Supabase built-in `gte-small` (384 dims, English only, free, no OpenRouter quota). `faqs.embedding vector(384)`; trigger clears it when question/answer edited; `embed-faqs` function rebuilds NULL ones. Reason: free OpenRouter models share a 50 req/day limit.
 - Models pinned 2026-10-12: `models` list = google/gemma-4-31b-it:free, nvidia/nemotron-3-super-120b-a12b:free, google/gemma-4-26b-a4b-it:free (replaced openrouter/free after a safety-model glitch). Revisit paid model before launch.
