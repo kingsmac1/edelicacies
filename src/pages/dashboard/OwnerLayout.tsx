@@ -1,10 +1,16 @@
-import { useEffect, useState, type ComponentType, type SVGProps } from 'react'
-import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { useAuth } from '../../context/AuthContext'
-import { isSupabaseConfigured } from '../../lib/supabase'
-import { countUnreadConversations } from '../../lib/api/inbox'
-import logo from '../../assets/brand/logo-wordmark-white.png'
-import logoMark from '../../assets/brand/logo-mark-white.png'
+import { useEffect, useState, type ComponentType, type SVGProps } from "react";
+import {
+  NavLink,
+  Navigate,
+  Outlet,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
+import { isSupabaseConfigured } from "../../lib/supabase";
+import { countUnreadConversations } from "../../lib/api/inbox";
+import logo from "../../assets/brand/logo-wordmark-white.png";
+import logoMark from "../../assets/brand/logo-mark-white.png";
 import {
   IconOrders,
   IconCalendar,
@@ -22,89 +28,159 @@ import {
   IconSliders,
   IconMore,
   IconPhoneChat,
-} from '../../components/dashboard/icons'
+} from "../../components/dashboard/icons";
 
 interface NavItem {
-  to: string
-  label: string
-  icon: ComponentType<SVGProps<SVGSVGElement>>
+  to: string;
+  label: string;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { to: '/dashboard/orders', label: 'Orders', icon: IconOrders },
-  { to: '/dashboard/daily-menu', label: 'Daily Menu & Slots', icon: IconCalendar },
-  { to: '/dashboard/menu-items', label: 'Menu Items', icon: IconBowl },
-  { to: '/dashboard/customers', label: 'Customers', icon: IconUsers },
-  { to: '/dashboard/finances', label: 'Finances', icon: IconWallet },
-  { to: '/dashboard/discount-codes', label: 'Discount Codes', icon: IconTag },
-  { to: '/dashboard/reviews', label: 'Reviews', icon: IconStar },
-  { to: '/dashboard/subscribers', label: 'Subscribers', icon: IconBell },
-  { to: '/dashboard/inbox', label: 'Inbox', icon: IconChat },
-  { to: '/dashboard/assistant', label: 'Owner Assistant', icon: IconChat },
-  { to: '/dashboard/ai-monitor', label: 'AI Monitor', icon: IconBarChart },
-  { to: '/dashboard/whatsapp', label: 'WhatsApp', icon: IconPhoneChat },
-  { to: '/dashboard/owner-numbers', label: 'Owner Numbers', icon: IconUsers },
-  { to: '/dashboard/activity', label: 'Activity Log', icon: IconBarChart },
-  { to: '/dashboard/enquiries', label: 'Enquiries', icon: IconInbox },
-  { to: '/dashboard/messaging', label: 'Messaging', icon: IconSend },
-  { to: '/dashboard/email-templates', label: 'Email Templates', icon: IconMail },
-  { to: '/dashboard/settings', label: 'Settings', icon: IconSliders },
-]
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
 
-const PRIMARY_MOBILE_PATHS = ['/dashboard/orders', '/dashboard/daily-menu', '/dashboard/menu-items']
+// Grouped by the job the owner is doing, not by when each page was built.
+const NAV_GROUPS: NavGroup[] = [
+  {
+    title: "Sales",
+    items: [
+      { to: "/dashboard/orders", label: "Orders", icon: IconOrders },
+      {
+        to: "/dashboard/daily-menu",
+        label: "Daily Menu & Slots",
+        icon: IconCalendar,
+      },
+      { to: "/dashboard/menu-items", label: "Menu Items", icon: IconBowl },
+      {
+        to: "/dashboard/discount-codes",
+        label: "Discount Codes",
+        icon: IconTag,
+      },
+    ],
+  },
+  {
+    title: "Customers",
+    items: [
+      { to: "/dashboard/customers", label: "Customers", icon: IconUsers },
+      { to: "/dashboard/reviews", label: "Reviews", icon: IconStar },
+      { to: "/dashboard/subscribers", label: "Subscribers", icon: IconBell },
+    ],
+  },
+  {
+    title: "Conversations",
+    items: [
+      { to: "/dashboard/inbox", label: "Inbox", icon: IconChat },
+      { to: "/dashboard/enquiries", label: "Enquiries", icon: IconInbox },
+      { to: "/dashboard/messaging", label: "Messaging", icon: IconSend },
+      {
+        to: "/dashboard/email-templates",
+        label: "Email Templates",
+        icon: IconMail,
+      },
+    ],
+  },
+  {
+    title: "AI & WhatsApp",
+    items: [
+      { to: "/dashboard/assistant", label: "Owner Assistant", icon: IconChat },
+      { to: "/dashboard/whatsapp", label: "WhatsApp", icon: IconPhoneChat },
+      {
+        to: "/dashboard/owner-numbers",
+        label: "Owner Numbers",
+        icon: IconUsers,
+      },
+      { to: "/dashboard/ai-monitor", label: "AI Monitor", icon: IconBarChart },
+    ],
+  },
+  {
+    title: "Business",
+    items: [
+      { to: "/dashboard/finances", label: "Finances", icon: IconWallet },
+      { to: "/dashboard/activity", label: "Activity Log", icon: IconBarChart },
+      { to: "/dashboard/settings", label: "Settings", icon: IconSliders },
+    ],
+  },
+];
+
+const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
+
+const PRIMARY_MOBILE_PATHS = [
+  "/dashboard/orders",
+  "/dashboard/daily-menu",
+  "/dashboard/menu-items",
+];
 
 export function OwnerLayout() {
-  const { session, loading, isOwner, signOut } = useAuth()
-  const location = useLocation()
-  const navigate = useNavigate()
-  const [moreOpen, setMoreOpen] = useState(false)
-  const [unreadChats, setUnreadChats] = useState(0)
+  const { session, loading, isOwner, signOut } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [unreadChats, setUnreadChats] = useState(0);
 
   // A small red number on "Inbox" when customers are waiting for you.
   useEffect(() => {
-    if (!session || isOwner !== true) return
-    let cancelled = false
+    if (!session || isOwner !== true) return;
+    let cancelled = false;
     const check = () =>
       countUnreadConversations()
         .then((n) => !cancelled && setUnreadChats(n))
-        .catch(() => undefined)
-    void check()
-    const id = window.setInterval(() => void check(), 20000)
+        .catch(() => undefined);
+    void check();
+    const id = window.setInterval(() => void check(), 20000);
     return () => {
-      cancelled = true
-      window.clearInterval(id)
-    }
-  }, [session, isOwner])
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [session, isOwner]);
 
-  if (!isSupabaseConfigured) return <Navigate to="/dashboard/login" replace />
+  if (!isSupabaseConfigured) return <Navigate to="/dashboard/login" replace />;
   if (loading) {
-    return <div className="flex min-h-screen items-center justify-center text-ink-400">Loading…</div>
+    return (
+      <div className="flex min-h-screen items-center justify-center text-ink-400">
+        Loading…
+      </div>
+    );
   }
-  if (!session) return <Navigate to="/dashboard/login" replace />
+  if (!session) return <Navigate to="/dashboard/login" replace />;
   if (isOwner === null) {
-    return <div className="flex min-h-screen items-center justify-center text-ink-400">Loading…</div>
+    return (
+      <div className="flex min-h-screen items-center justify-center text-ink-400">
+        Loading…
+      </div>
+    );
   }
   if (!isOwner) {
     // Logged in, but as a customer: the dashboard is not for them.
     return (
       <div className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center px-4 text-center">
-        <h1 className="text-xl font-semibold text-ink-800">This is the owner area</h1>
+        <h1 className="text-xl font-semibold text-ink-800">
+          This is the owner area
+        </h1>
         <p className="mt-2 text-[14px] text-ink-400">
-          You're signed in with a customer account, which can't open the dashboard.
+          You're signed in with a customer account, which can't open the
+          dashboard.
         </p>
         <button
-          onClick={() => void signOut().then(() => navigate('/'))}
+          onClick={() => void signOut().then(() => navigate("/"))}
           className="mt-5 min-h-11 rounded-full bg-ink-900 px-5 text-[14px] font-semibold text-white"
         >
           Sign out and go to the site
         </button>
       </div>
-    )
+    );
   }
 
-  const primaryItems = NAV_ITEMS.filter((item) => PRIMARY_MOBILE_PATHS.includes(item.to))
-  const moreItems = NAV_ITEMS.filter((item) => !PRIMARY_MOBILE_PATHS.includes(item.to))
-  const isMoreActive = moreItems.some((item) => location.pathname.startsWith(item.to))
+  const primaryItems = NAV_ITEMS.filter((item) =>
+    PRIMARY_MOBILE_PATHS.includes(item.to),
+  );
+  const moreItems = NAV_ITEMS.filter(
+    (item) => !PRIMARY_MOBILE_PATHS.includes(item.to),
+  );
+  const isMoreActive = moreItems.some((item) =>
+    location.pathname.startsWith(item.to),
+  );
 
   return (
     <div className="flex min-h-screen overflow-x-hidden bg-ink-50">
@@ -114,24 +190,33 @@ export function OwnerLayout() {
           <img src={logo} alt="Edelicacies" className="h-11 w-auto" />
         </div>
         <nav className="flex-1 overflow-y-auto p-3">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `mb-1 flex min-h-11 items-center gap-3 rounded-xl px-3 text-[14px] font-medium transition-colors ${
-                  isActive ? 'bg-white text-brand-600' : 'text-white/85 hover:bg-white/10'
-                }`
-              }
-            >
-              <item.icon className="h-5 w-5 shrink-0" />
-              {item.label}
-              {item.to === '/dashboard/inbox' && unreadChats > 0 && (
-                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[11px] font-bold text-brand-600">
-                  {unreadChats}
-                </span>
-              )}
-            </NavLink>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title} className="mb-3">
+              <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-white/50">
+                {group.title}
+              </p>
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `mb-1 flex min-h-11 items-center gap-3 rounded-xl px-3 text-[14px] font-medium transition-colors ${
+                      isActive
+                        ? "bg-white text-brand-600"
+                        : "text-white/85 hover:bg-white/10"
+                    }`
+                  }
+                >
+                  <item.icon className="h-5 w-5 shrink-0" />
+                  {item.label}
+                  {item.to === "/dashboard/inbox" && unreadChats > 0 && (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[11px] font-bold text-brand-600">
+                      {unreadChats}
+                    </span>
+                  )}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="border-t border-white/15 p-3">
@@ -147,8 +232,14 @@ export function OwnerLayout() {
       <div className="flex min-w-0 flex-1 flex-col sm:ml-64">
         <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-ink-100 bg-white px-4 sm:hidden">
           <div className="flex items-center gap-2">
-            <img src={logoMark} alt="" className="h-8 w-auto rounded-md bg-brand-500 p-1" />
-            <span className="font-display text-lg font-medium text-ink-800">Edelicacies Owner</span>
+            <img
+              src={logoMark}
+              alt=""
+              className="h-8 w-auto rounded-md bg-brand-500 p-1"
+            />
+            <span className="font-display text-lg font-medium text-ink-800">
+              Edelicacies Owner
+            </span>
           </div>
           <button
             onClick={() => void signOut()}
@@ -170,18 +261,18 @@ export function OwnerLayout() {
               to={item.to}
               className={({ isActive }) =>
                 `flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
-                  isActive ? 'text-white' : 'text-white/60'
+                  isActive ? "text-white" : "text-white/60"
                 }`
               }
             >
               <item.icon className="h-5 w-5" />
-              {item.label === 'Daily Menu & Slots' ? 'Daily Menu' : item.label}
+              {item.label === "Daily Menu & Slots" ? "Daily Menu" : item.label}
             </NavLink>
           ))}
           <button
             onClick={() => setMoreOpen(true)}
             className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
-              isMoreActive ? 'text-white' : 'text-white/60'
+              isMoreActive ? "text-white" : "text-white/60"
             }`}
           >
             <IconMore className="h-5 w-5" />
@@ -192,36 +283,60 @@ export function OwnerLayout() {
 
       {moreOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:hidden">
-          <button aria-label="Close" onClick={() => setMoreOpen(false)} className="absolute inset-0 bg-ink-900/50" />
+          <button
+            aria-label="Close"
+            onClick={() => setMoreOpen(false)}
+            className="absolute inset-0 bg-ink-900/50"
+          />
           <div className="animate-slide-up relative w-full rounded-t-3xl bg-white p-5 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-            <h2 className="mb-4 text-[15px] font-semibold text-ink-800">More</h2>
-            <div className="grid grid-cols-3 gap-3">
-              {moreItems.map((item) => (
-                <button
-                  key={item.to}
-                  onClick={() => {
-                    setMoreOpen(false)
-                    navigate(item.to)
-                  }}
-                  className={`flex flex-col items-center gap-1.5 rounded-2xl p-3 text-center text-[12px] font-medium ${
-                    location.pathname.startsWith(item.to) ? 'bg-brand-50 text-brand-600' : 'bg-ink-50 text-ink-600'
-                  }`}
-                >
-                  <span className="relative">
-                    <item.icon className="h-6 w-6" />
-                    {item.to === '/dashboard/inbox' && unreadChats > 0 && (
-                      <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-500 px-1 text-[10px] font-bold text-white">
-                        {unreadChats}
-                      </span>
-                    )}
-                  </span>
-                  {item.label}
-                </button>
-              ))}
+            <h2 className="mb-4 text-[15px] font-semibold text-ink-800">
+              More
+            </h2>
+            <div className="max-h-[70vh] overflow-y-auto">
+              {NAV_GROUPS.map((group) => {
+                const items = group.items.filter(
+                  (i) => !PRIMARY_MOBILE_PATHS.includes(i.to),
+                );
+                if (items.length === 0) return null;
+                return (
+                  <div key={group.title} className="mb-4">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-400">
+                      {group.title}
+                    </p>
+                    <div className="grid grid-cols-3 gap-3">
+                      {items.map((item) => (
+                        <button
+                          key={item.to}
+                          onClick={() => {
+                            setMoreOpen(false);
+                            navigate(item.to);
+                          }}
+                          className={`flex flex-col items-center gap-1.5 rounded-2xl p-3 text-center text-[12px] font-medium ${
+                            location.pathname.startsWith(item.to)
+                              ? "bg-brand-50 text-brand-600"
+                              : "bg-ink-50 text-ink-600"
+                          }`}
+                        >
+                          <span className="relative">
+                            <item.icon className="h-6 w-6" />
+                            {item.to === "/dashboard/inbox" &&
+                              unreadChats > 0 && (
+                                <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-500 px-1 text-[10px] font-bold text-white">
+                                  {unreadChats}
+                                </span>
+                              )}
+                          </span>
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }
