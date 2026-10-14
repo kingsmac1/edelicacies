@@ -6,6 +6,7 @@ import { useCart } from '../../context/CartContext'
 export function CartBubble() {
   const { itemCount } = useCart()
   const hasItems = itemCount > 0
+  if (!hasItems) return null
 
   return (
     <>
@@ -25,7 +26,17 @@ export function CartBubble() {
         className="fixed bottom-[88px] right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-ink-800 text-white shadow-lg shadow-black/20 active:scale-95"
       >
         {hasItems && <span className="cart-bubble-ring" aria-hidden="true" />}
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg
+          width="26"
+          height="26"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
           <circle cx="9" cy="20" r="1.5" />
           <circle cx="18" cy="20" r="1.5" />
           <path d="M2 3h3l2.4 12.2a1 1 0 001 .8h9.7a1 1 0 001-.8L21 7H6" />

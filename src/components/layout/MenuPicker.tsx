@@ -114,7 +114,7 @@ export function MenuPicker({
                       onClick={() => change(i.code, 1, i.left)}
                       className="rounded-full bg-brand-50 px-3 py-1.5 text-[12px] font-semibold text-brand-600 active:scale-95"
                     >
-                      Add
+                      {day.heading.startsWith('Tomorrow') ? 'Pre-order' : 'Order'}
                     </button>
                   ) : (
                     <div className="flex items-center gap-1">

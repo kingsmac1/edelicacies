@@ -22,7 +22,8 @@ import {
 
 const POLL_MS = 5000
 
-const GREETING = "Hi! I'm the Edelicacies assistant. Ask me anything about our food."
+const GREETING =
+  "Hi! I'm the Edelicacies assistant. Ask me anything about our food. To order or pre-order, select from the food above."
 
 // A message waiting for the server's answer gets a negative temporary id.
 type Shown = ChatMessageOut & { pending?: boolean }
@@ -31,6 +32,18 @@ type Shown = ChatMessageOut & { pending?: boolean }
 // floating bubbles are not drawn.
 export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
   const navigate = useNavigate()
+  // Messages the customer chose to delete from their own view (this device
+  // only; the team keeps the conversation record for order handling).
+  const [hidden, setHidden] = useState<number[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('edelicacies.chat.hidden.v1') ?? '[]')
+    } catch {
+      return []
+    }
+  })
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<number[]>([])
+  const [confirmClear, setConfirmClear] = useState(false)
   const [open, setOpen] = useState(fullPage)
   const [messages, setMessages] = useState<Shown[]>([])
   const [mode, setMode] = useState<ChatMode>('ai')
@@ -67,6 +80,14 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
 
   const resetChat = useCallback(() => {
     clearStoredChat()
+    try {
+      localStorage.removeItem('edelicacies.chat.hidden.v1')
+    } catch {
+      /* nothing to clear */
+    }
+    setHidden([])
+    setSelected([])
+    setSelecting(false)
     chatRef.current = null
     lastIdRef.current = 0
     setMessages([])
@@ -225,7 +246,7 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
         {fullPage ? (
           <Link
             to="/"
-            className="rounded-full px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-white/10"
+            className="shrink-0 rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white ring-1 ring-white/30 hover:bg-white/25"
           >
             Visit site
           </Link>
@@ -255,11 +276,25 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
     }
   }
 
+  const shown = messages.filter((m) => !hidden.includes(m.id))
+
+  function deleteSelected() {
+    const next = [...new Set([...hidden, ...selected])]
+    setHidden(next)
+    try {
+      localStorage.setItem('edelicacies.chat.hidden.v1', JSON.stringify(next))
+    } catch {
+      /* private mode: they come back after a refresh */
+    }
+    setSelected([])
+    setSelecting(false)
+  }
+
   const suggestions = [
-    "What's on today's menu?",
-    "I'd like to place an order",
     'Do you deliver to my area?',
     'What time do you open?',
+    'How can I pay?',
+    'Can I pre-order for tomorrow?',
   ]
 
   return (
@@ -300,74 +335,155 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
                 </div>
               )}
 
-              {messages.map((m) => {
-                if (m.role === 'system') {
+              {fullPage && messages.length > 0 && (
+                <div className="flex items-center justify-end gap-2 pb-1 text-[12px]">
+                  {selecting ? (
+                    <>
+                      <span className="mr-auto text-ink-400">{selected.length} selected</span>
+                      <button
+                        type="button"
+                        disabled={selected.length === 0}
+                        onClick={deleteSelected}
+                        className="rounded-full bg-brand-500 px-3 py-1 font-semibold text-white disabled:opacity-40"
+                      >
+                        Delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelecting(false)
+                          setSelected([])
+                        }}
+                        className="rounded-full bg-white px-3 py-1 font-semibold text-ink-600 ring-1 ring-ink-200"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : confirmClear ? (
+                    <>
+                      <span className="mr-auto text-ink-500">Clear the whole chat?</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          resetChat()
+                          setConfirmClear(false)
+                        }}
+                        className="rounded-full bg-brand-500 px-3 py-1 font-semibold text-white"
+                      >
+                        Yes, clear
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClear(false)}
+                        className="rounded-full bg-white px-3 py-1 font-semibold text-ink-600 ring-1 ring-ink-200"
+                      >
+                        No
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setSelecting(true)}
+                        className="rounded-full bg-white px-3 py-1 font-semibold text-ink-600 ring-1 ring-ink-200"
+                      >
+                        Select messages
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClear(true)}
+                        className="rounded-full bg-white px-3 py-1 font-semibold text-ink-600 ring-1 ring-ink-200"
+                      >
+                        Clear chat
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {shown.map((m) => {
+                const row = ((m) => {
+                  if (m.role === 'system') {
+                    return (
+                      <p key={m.id} className="px-2 py-1 text-center text-[12px] italic text-ink-400">
+                        {m.content}
+                      </p>
+                    )
+                  }
+                  const mine = m.role === 'user'
                   return (
-                    <p key={m.id} className="px-2 py-1 text-center text-[12px] italic text-ink-400">
-                      {m.content}
-                    </p>
+                    <div key={m.id} className={mine ? 'flex justify-end' : 'flex flex-col items-start gap-2'}>
+                      {m.role === 'owner' && (
+                        <span className="-mb-1 ml-1 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
+                          Edelicacies team
+                        </span>
+                      )}
+                      <p
+                        className={
+                          'max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ' +
+                          (mine
+                            ? 'bg-brand-500 text-white ' + (m.pending ? 'opacity-70' : '')
+                            : m.role === 'owner'
+                              ? 'bg-ink-900 text-white'
+                              : 'bg-white text-ink-800 ring-1 ring-ink-100')
+                        }
+                      >
+                        {m.content}
+                      </p>
+                      {m.id === pickerId && m.meta?.menuOptions && (
+                        <MenuPicker
+                          days={m.meta.menuOptions}
+                          disabled={loading}
+                          onSend={(t, sel) => void sendText(t, sel)}
+                        />
+                      )}
+                      {m.meta?.orderNumber && (
+                        <p className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">
+                          <span aria-hidden>✓</span> Order {m.meta.orderNumber} received, waiting for approval
+                        </p>
+                      )}
+                      {m.meta?.enquirySaved && (
+                        <p className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">
+                          <span aria-hidden>✓</span> Sent to the team
+                        </p>
+                      )}
+                      {m.meta?.trackUrl && (
+                        <a
+                          href={m.meta.trackUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex min-h-10 items-center gap-2 rounded-full bg-ink-900 px-4 text-[13px] font-semibold text-white shadow-sm active:scale-95"
+                        >
+                          Track my order
+                        </a>
+                      )}
+                      {m.meta?.whatsappUrl && (
+                        <a
+                          href={m.meta.whatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#25D366] px-4 text-[13px] font-semibold text-white shadow-sm active:scale-95"
+                        >
+                          {m.meta.orderNumber
+                            ? 'Continue on WhatsApp for payment details'
+                            : 'Chat with the team on WhatsApp'}
+                        </a>
+                      )}
+                    </div>
                   )
-                }
-                const mine = m.role === 'user'
+                })(m)
+                if (!selecting) return row
+                const on = selected.includes(m.id)
                 return (
-                  <div key={m.id} className={mine ? 'flex justify-end' : 'flex flex-col items-start gap-2'}>
-                    {m.role === 'owner' && (
-                      <span className="-mb-1 ml-1 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
-                        Edelicacies team
-                      </span>
-                    )}
-                    <p
-                      className={
-                        'max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ' +
-                        (mine
-                          ? 'bg-brand-500 text-white ' + (m.pending ? 'opacity-70' : '')
-                          : m.role === 'owner'
-                            ? 'bg-ink-900 text-white'
-                            : 'bg-white text-ink-800 ring-1 ring-ink-100')
-                      }
-                    >
-                      {m.content}
-                    </p>
-                    {m.id === pickerId && m.meta?.menuOptions && (
-                      <MenuPicker
-                        days={m.meta.menuOptions}
-                        disabled={loading}
-                        onSend={(t, sel) => void sendText(t, sel)}
-                      />
-                    )}
-                    {m.meta?.orderNumber && (
-                      <p className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">
-                        <span aria-hidden>✓</span> Order {m.meta.orderNumber} received, waiting for approval
-                      </p>
-                    )}
-                    {m.meta?.enquirySaved && (
-                      <p className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">
-                        <span aria-hidden>✓</span> Sent to the team
-                      </p>
-                    )}
-                    {m.meta?.trackUrl && (
-                      <a
-                        href={m.meta.trackUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex min-h-10 items-center gap-2 rounded-full bg-ink-900 px-4 text-[13px] font-semibold text-white shadow-sm active:scale-95"
-                      >
-                        Track my order
-                      </a>
-                    )}
-                    {m.meta?.whatsappUrl && (
-                      <a
-                        href={m.meta.whatsappUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#25D366] px-4 text-[13px] font-semibold text-white shadow-sm active:scale-95"
-                      >
-                        {m.meta.orderNumber
-                          ? 'Continue on WhatsApp for payment details'
-                          : 'Chat with the team on WhatsApp'}
-                      </a>
-                    )}
-                  </div>
+                  <label key={m.id} className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => setSelected((p) => (on ? p.filter((x) => x !== m.id) : [...p, m.id]))}
+                      className="mt-2 h-4 w-4 shrink-0 accent-[var(--color-brand-500)]"
+                    />
+                    <div className="pointer-events-none min-w-0 flex-1">{row}</div>
+                  </label>
                 )
               })}
 

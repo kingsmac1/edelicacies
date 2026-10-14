@@ -42,8 +42,8 @@ export function MenuStrip({
 
   const days = useMemo(() => {
     const out: MenuOptionDay[] = []
-    if (dailyMenu.items.length > 0) out.push(toDay(dailyMenu, 'Today'))
-    if (tomorrowMenu && tomorrowMenu.items.length > 0) out.push(toDay(tomorrowMenu, 'Tomorrow (pre-order)'))
+    if (dailyMenu.items.length > 0) out.push(toDay(dailyMenu, "Today's menu"))
+    if (tomorrowMenu && tomorrowMenu.items.length > 0) out.push(toDay(tomorrowMenu, "Tomorrow's menu"))
     return out
   }, [dailyMenu, tomorrowMenu])
 
