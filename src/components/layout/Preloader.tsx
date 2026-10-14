@@ -4,7 +4,7 @@ import logo from '../../assets/brand/logo-wordmark-white.png'
 type Phase = 'visible' | 'logoOut' | 'bgOut' | 'done'
 
 const HOLD_MS = 650
-const LOGO_OUT_MS = 300
+const LOGO_OUT_MS = 450
 const BG_OUT_MS = 700
 
 export function Preloader() {
@@ -45,14 +45,14 @@ export function Preloader() {
         style={{ transitionDuration: `${BG_OUT_MS}ms` }}
       />
       <div className="absolute inset-0 flex items-center justify-center">
-        <img
-          src={logo}
-          alt="Edelicacies"
-          className={`animate-fade-in-up h-20 w-auto transition-all ease-out ${
-            logoGone ? 'scale-90 opacity-0' : 'scale-100 opacity-100'
-          }`}
+        {/* The fade lives on a wrapper: the image's own entrance animation
+            holds opacity at 1 (fill-mode "both") and would override it. */}
+        <div
+          className={`transition-all ease-out ${logoGone ? 'scale-90 opacity-0' : 'scale-100 opacity-100'}`}
           style={{ transitionDuration: `${LOGO_OUT_MS}ms` }}
-        />
+        >
+          <img src={logo} alt="Edelicacies" className="animate-fade-in-up h-20 w-auto" />
+        </div>
       </div>
     </div>
   )

@@ -1,3 +1,4 @@
+import { CartBubble } from './CartBubble'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChatNotFoundError,
@@ -288,6 +289,7 @@ export function ChatWidget() {
         </div>
       )}
 
+      {!open && <CartBubble />}
       {!open && (
         <button
           type="button"
