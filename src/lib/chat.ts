@@ -53,7 +53,24 @@ export function forgetSavedDetails(): void {
   }
 }
 
+export interface MenuOptionItem {
+  code: string
+  name: string
+  category: string
+  image?: string | null
+  label: string
+  price: number
+  left: number | null
+  soldOut: boolean
+}
+export interface MenuOptionDay {
+  date: string
+  heading: string
+  items: MenuOptionItem[]
+}
+
 export interface ChatMeta {
+  menuOptions?: MenuOptionDay[] | null
   orderDetails?: SavedDetails | null
   whatsappUrl?: string | null
   orderNumber?: string | null
@@ -136,9 +153,14 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
   return parsed as T
 }
 
-export function sendChatMessage(message: string, chat: StoredChat | null): Promise<SendResult> {
+export function sendChatMessage(
+  message: string,
+  chat: StoredChat | null,
+  selection?: { code: string; quantity: number }[],
+): Promise<SendResult> {
   return invoke<SendResult>({
     message,
+    ...(selection && selection.length > 0 ? { selection } : {}),
     ...(loadSavedDetails() ? { savedDetails: loadSavedDetails() } : {}),
     ...(chat ? { conversationId: chat.conversationId, accessToken: chat.accessToken } : {}),
   })

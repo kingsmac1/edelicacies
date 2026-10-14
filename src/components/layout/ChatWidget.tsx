@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom'
 import heroDish from '../../assets/menu/native-rice-turkey-snails.jpg'
 import logoWordmark from '../../assets/brand/logo-wordmark-white.png'
+import { MenuStrip } from './MenuStrip'
+import { MenuPicker } from './MenuPicker'
 import { CartBubble } from './CartBubble'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -12,7 +14,6 @@ import {
   sendChatMessage,
   type ChatMessageOut,
   type ChatMode,
-  type SavedDetails,
   type StoredChat,
   forgetSavedDetails,
   loadSavedDetails,
@@ -36,8 +37,6 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [unseen, setUnseen] = useState(false)
-  // Details from an order just placed, waiting for the customer's yes/no.
-  const [offer, setOffer] = useState<SavedDetails | null>(null)
   const [hasSaved, setHasSaved] = useState(() => loadSavedDetails() !== null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const chatRef = useRef<StoredChat | null>(null)
@@ -137,7 +136,7 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
     void sendText(input.trim())
   }
 
-  async function sendText(text: string) {
+  async function sendText(text: string, selection?: { code: string; quantity: number }[]) {
     if (!text || loading) return
 
     tempId.current -= 1
@@ -157,7 +156,7 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
     setLoading(true)
 
     try {
-      const result = await sendChatMessage(text, chatRef.current)
+      const result = await sendChatMessage(text, chatRef.current, selection)
       if (!chatRef.current && result.accessToken) {
         const created = {
           conversationId: result.conversationId,
@@ -168,11 +167,12 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
       }
       setMode(result.mode)
       merge(result.messages)
+      // Remember the details of the order just placed, automatically. The next
+      // order offers them back for the customer to confirm or edit.
       const placed = result.messages.find((m) => m.meta?.orderDetails)?.meta?.orderDetails
       if (placed) {
-        const old = loadSavedDetails()
-        const same = old && JSON.stringify(old) === JSON.stringify(placed)
-        if (!same) setOffer(placed)
+        storeSavedDetails(placed)
+        setHasSaved(true)
       }
     } catch (err) {
       if (err instanceof ChatNotFoundError) {
@@ -242,6 +242,18 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
     </div>
   )
 
+  // The tap card belongs to the newest assistant message that has one, and
+  // goes away once the customer replies.
+  let pickerId: number | null = null
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'user') break
+    if (m.meta?.menuOptions?.length) {
+      pickerId = m.id
+      break
+    }
+  }
+
   const suggestions = [
     "What's on today's menu?",
     "I'd like to place an order",
@@ -263,6 +275,7 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
 
           <div className={`flex-1 overflow-y-auto bg-cream-50 ${fullPage ? '' : 'p-3'}`}>
             {fullPage && header}
+            {fullPage && <MenuStrip disabled={loading} onSend={(t, sel) => void sendText(t, sel)} />}
             <div className={`space-y-2 ${fullPage ? 'p-3' : ''}`}>
               <div className="flex justify-start">
                 <p className="max-w-[85%] rounded-2xl bg-white px-3 py-2 text-sm text-ink-800 ring-1 ring-ink-100">
@@ -314,6 +327,13 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
                     >
                       {m.content}
                     </p>
+                    {m.id === pickerId && m.meta?.menuOptions && (
+                      <MenuPicker
+                        days={m.meta.menuOptions}
+                        disabled={loading}
+                        onSend={(t, sel) => void sendText(t, sel)}
+                      />
+                    )}
                     {m.meta?.orderNumber && (
                       <p className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">
                         <span aria-hidden>✓</span> Order {m.meta.orderNumber} received, waiting for approval
@@ -365,36 +385,7 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
                     Our team has your message and will reply here shortly.
                   </p>
                 )}
-              {offer && (
-                <div className="flex flex-col items-start gap-2">
-                  <p className="max-w-[85%] rounded-2xl bg-white px-3 py-2 text-sm text-ink-800 ring-1 ring-ink-100">
-                    Would you like me to remember your details ({offer.name}, {offer.phone}
-                    {offer.delivery_type === 'delivery' && offer.address ? `, ${offer.address}` : ''}) on this
-                    device, so you don't have to type them again next time?
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        storeSavedDetails(offer)
-                        setHasSaved(true)
-                        setOffer(null)
-                      }}
-                      className="rounded-full bg-brand-500 px-3.5 py-2 text-[13px] font-semibold text-white active:scale-95"
-                    >
-                      Yes, remember me
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOffer(null)}
-                      className="rounded-full border border-ink-200 bg-white px-3.5 py-2 text-[13px] font-medium text-ink-600 active:scale-95"
-                    >
-                      No thanks
-                    </button>
-                  </div>
-                </div>
-              )}
-              {hasSaved && !offer && messages.length > 0 && (
+              {hasSaved && messages.length > 0 && (
                 <button
                   type="button"
                   onClick={() => {
