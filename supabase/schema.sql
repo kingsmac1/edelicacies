@@ -339,13 +339,29 @@ create policy "daily_menu_slots owner delete"
   to authenticated
   using (is_owner());
 
--- settings (no secrets live here — just public operational settings like
--- the announcement banner and shop coordinates)
+-- settings: the public website may read ONLY the display settings it needs
+-- (banner, hours, shop location, delivery rules, pickup text). Anything else
+-- here (owner_email, AI limits, email limits, expense categories, WhatsApp
+-- status) is readable by the owner only. Add a key to this list only if the
+-- public site really needs it.
 drop policy if exists "settings public read" on settings;
-create policy "settings public read"
+drop policy if exists "settings public read safe keys" on settings;
+create policy "settings public read safe keys"
   on settings for select
   to anon, authenticated
-  using (true);
+  using (
+    key in (
+      'announcement_banner', 'business_hours', 'shop_location',
+      'max_delivery_km', 'delivery_step', 'pickup_instructions',
+      'slot_hold_minutes'
+    )
+  );
+
+drop policy if exists "settings owner read all" on settings;
+create policy "settings owner read all"
+  on settings for select
+  to authenticated
+  using (is_owner());
 
 drop policy if exists "settings owner write" on settings;
 create policy "settings owner write"
@@ -1452,7 +1468,7 @@ create policy "enquiries owner all"
 -- Where an order came from.
 alter table orders add column if not exists source text not null default 'website';
 alter table orders drop constraint if exists orders_source_check;
-alter table orders add constraint orders_source_check check (source in ('website', 'chat'));
+alter table orders add constraint orders_source_check check (source in ('website', 'chat', 'owner'));
 
 -- Allow the new "pending_approval" status. The old check constraint may have
 -- any auto-generated name, so find it by what it checks and replace it.
@@ -2026,3 +2042,1679 @@ create policy "whatsapp_config owner all"
 -- Inbox for the owner, but the assistant does not answer them. Everything
 -- else (website chat, order updates, owner replies) is unchanged.
 alter table whatsapp_config add column if not exists assistant_enabled boolean not null default true;
+
+-- ============================================================================
+-- PHASE 7: OWNER NUMBERS + ADMIN LOG
+-- ============================================================================
+-- Phone numbers allowed to use the owner (admin) tools on WhatsApp. The check
+-- "is this sender an owner?" is done by CODE against this table, before the
+-- assistant ever sees the message. A new number is 'pending' until the code
+-- sent to it is confirmed, so a typo can never hand a stranger admin power.
+
+create table if not exists owner_numbers (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  phone text not null unique,            -- digits only, with country code
+  status text not null default 'pending' check (status in ('pending', 'active')),
+  verified_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists owner_numbers_set_updated_at on owner_numbers;
+create trigger owner_numbers_set_updated_at
+  before update on owner_numbers
+  for each row execute function set_updated_at();
+
+alter table owner_numbers enable row level security;
+-- The owner may READ the list. There is deliberately NO insert/update/delete
+-- policy: every change goes through the functions below, which log it.
+drop policy if exists "owner_numbers owner read" on owner_numbers;
+create policy "owner_numbers owner read"
+  on owner_numbers for select to authenticated using (is_owner());
+
+-- Verification codes live apart, with no policy at all: the owner's browser
+-- can never read a code (or its hash). Only the functions below can.
+create table if not exists owner_number_codes (
+  owner_number_id uuid primary key references owner_numbers(id) on delete cascade,
+  code_hash text not null,
+  expires_at timestamptz not null,
+  attempts integer not null default 0,
+  sent_at timestamptz not null default now()
+);
+alter table owner_number_codes enable row level security;
+
+-- Every owner action (from the dashboard or WhatsApp) is written here.
+create table if not exists admin_log (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  actor text not null,            -- e.g. 'dashboard: you@mail.com' or 'whatsapp: 2348012345678'
+  action text not null,           -- e.g. 'owner_number.add'
+  summary text not null,          -- one readable line
+  before_value jsonb,
+  after_value jsonb
+);
+create index if not exists admin_log_created_idx on admin_log(created_at desc);
+
+alter table admin_log enable row level security;
+drop policy if exists "admin_log owner read" on admin_log;
+create policy "admin_log owner read"
+  on admin_log for select to authenticated using (is_owner());
+-- No write policy: rows are added only by security-definer functions and by
+-- our Edge Functions (service key).
+
+-- Who is acting right now, for the log.
+create or replace function admin_actor()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select 'dashboard: ' || coalesce((select email from auth.users where id = auth.uid()), 'owner');
+$$;
+revoke all on function admin_actor() from public, anon;
+grant execute on function admin_actor() to authenticated, service_role;
+
+-- "08012345678" / "+234 801 234 5678" -> "2348012345678" (null if not a phone).
+create or replace function normalize_phone(p text)
+returns text
+language plpgsql
+immutable
+as $$
+declare
+  d text := regexp_replace(coalesce(p, ''), '\D', '', 'g');
+begin
+  if d like '0%' then d := '234' || substr(d, 2); end if;
+  if length(d) < 10 or length(d) > 15 then return null; end if;
+  return d;
+end;
+$$;
+
+create or replace function add_owner_number(p_name text, p_phone text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name text := btrim(coalesce(p_name, ''));
+  v_phone text := normalize_phone(p_phone);
+  v_id uuid;
+begin
+  if not is_owner() then raise exception 'NOT_ALLOWED'; end if;
+  if v_name = '' or char_length(v_name) > 60 then raise exception 'INVALID_NAME'; end if;
+  if v_phone is null then raise exception 'INVALID_PHONE'; end if;
+  if exists (select 1 from owner_numbers where phone = v_phone) then raise exception 'ALREADY_EXISTS'; end if;
+  if (select count(*) from owner_numbers) >= 5 then raise exception 'TOO_MANY'; end if;
+
+  insert into owner_numbers (name, phone) values (v_name, v_phone) returning id into v_id;
+  insert into admin_log (actor, action, summary, after_value)
+  values (admin_actor(), 'owner_number.add', 'Added owner number ' || v_name || ' (' || v_phone || ')',
+          jsonb_build_object('name', v_name, 'phone', v_phone, 'status', 'pending'));
+  return v_id;
+end;
+$$;
+
+create or replace function rename_owner_number(p_id uuid, p_name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name text := btrim(coalesce(p_name, ''));
+  v_old text;
+begin
+  if not is_owner() then raise exception 'NOT_ALLOWED'; end if;
+  if v_name = '' or char_length(v_name) > 60 then raise exception 'INVALID_NAME'; end if;
+  select name into v_old from owner_numbers where id = p_id;
+  if v_old is null then raise exception 'NOT_FOUND'; end if;
+  update owner_numbers set name = v_name where id = p_id;
+  insert into admin_log (actor, action, summary, before_value, after_value)
+  values (admin_actor(), 'owner_number.rename', 'Renamed owner number ' || v_old || ' to ' || v_name,
+          jsonb_build_object('name', v_old), jsonb_build_object('name', v_name));
+end;
+$$;
+
+create or replace function remove_owner_number(p_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row owner_numbers;
+begin
+  if not is_owner() then raise exception 'NOT_ALLOWED'; end if;
+  select * into v_row from owner_numbers where id = p_id;
+  if v_row.id is null then raise exception 'NOT_FOUND'; end if;
+  delete from owner_numbers where id = p_id;
+  insert into admin_log (actor, action, summary, before_value)
+  values (admin_actor(), 'owner_number.remove', 'Removed owner number ' || v_row.name || ' (' || v_row.phone || ')',
+          jsonb_build_object('name', v_row.name, 'phone', v_row.phone, 'status', v_row.status));
+end;
+$$;
+
+-- The code is made and sent by the whatsapp Edge Function (service key), which
+-- stores only a hash here. The owner confirms it from the dashboard.
+create or replace function confirm_owner_number(p_id uuid, p_code text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row owner_number_codes;
+  v_num owner_numbers;
+  v_given text := encode(sha256(convert_to(p_id::text || btrim(coalesce(p_code, '')), 'UTF8')), 'hex');
+begin
+  if not is_owner() then raise exception 'NOT_ALLOWED'; end if;
+  select * into v_num from owner_numbers where id = p_id;
+  if v_num.id is null then raise exception 'NOT_FOUND'; end if;
+  if v_num.status = 'active' then return true; end if;
+
+  select * into v_row from owner_number_codes where owner_number_id = p_id for update;
+  if v_row.owner_number_id is null then raise exception 'NO_CODE'; end if;
+  if v_row.expires_at < now() then raise exception 'CODE_EXPIRED'; end if;
+  if v_row.attempts >= 5 then raise exception 'TOO_MANY_ATTEMPTS'; end if;
+
+  if v_row.code_hash <> v_given then
+    update owner_number_codes set attempts = attempts + 1 where owner_number_id = p_id;
+    return false;
+  end if;
+
+  update owner_numbers set status = 'active', verified_at = now() where id = p_id;
+  delete from owner_number_codes where owner_number_id = p_id;
+  insert into admin_log (actor, action, summary, after_value)
+  values (admin_actor(), 'owner_number.verify', 'Verified owner number ' || v_num.name || ' (' || v_num.phone || ')',
+          jsonb_build_object('status', 'active'));
+  return true;
+end;
+$$;
+
+-- Used by our Edge Functions only: is this phone number an ACTIVE owner?
+create or replace function owner_name_for_phone(p_phone text)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select name from owner_numbers where phone = normalize_phone(p_phone) and status = 'active' limit 1;
+$$;
+
+revoke all on function normalize_phone(text) from public;
+grant execute on function normalize_phone(text) to authenticated, service_role;
+revoke all on function add_owner_number(text, text) from public, anon;
+grant execute on function add_owner_number(text, text) to authenticated;
+revoke all on function rename_owner_number(uuid, text) from public, anon;
+grant execute on function rename_owner_number(uuid, text) to authenticated;
+revoke all on function remove_owner_number(uuid) from public, anon;
+grant execute on function remove_owner_number(uuid) to authenticated;
+revoke all on function confirm_owner_number(uuid, text) from public, anon;
+grant execute on function confirm_owner_number(uuid, text) to authenticated;
+revoke all on function owner_name_for_phone(text) from public, anon, authenticated;
+grant execute on function owner_name_for_phone(text) to service_role;
+
+-- Name of the approved WhatsApp template that carries the verification code.
+alter table whatsapp_config add column if not exists template_owner_code text not null default 'owner_verification';
+
+-- ============================================================================
+-- PHASE 7 (step 2): EXACT NUMBERS FOR THE OWNER ASSISTANT
+-- ============================================================================
+-- The assistant never adds up or guesses. It asks these functions and reads
+-- the answer out. They use the SAME rules as Dashboard -> Finances:
+--   * a day means the order's menu_date (the day the meal is for)
+--   * "sold" counts orders that are paid or further along (paid, preparing,
+--     out for delivery, ready for pickup, delivered) plus manual/offline
+--     sales (amount + delivery fee)
+--   * cancelled orders are never counted
+-- Callable by the owner (dashboard) and by our server functions (service key).
+
+create or replace function owner_report(p_range text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_today date := (now() at time zone 'Africa/Lagos')::date;
+  v_start date;
+  v_end date;
+  v_label text;
+  v_committed text[] := array['paid', 'preparing', 'out_for_delivery', 'ready_for_pickup', 'delivered'];
+  v_orders jsonb;
+  v_sales jsonb;
+  v_best jsonb;
+  v_orders_total bigint;
+  v_manual_total bigint;
+begin
+  if not (is_owner() or auth.role() = 'service_role') then
+    raise exception 'NOT_ALLOWED';
+  end if;
+
+  if p_range = 'today' then
+    v_start := v_today; v_end := v_today; v_label := 'today';
+  elsif p_range = 'yesterday' then
+    v_start := v_today - 1; v_end := v_today - 1; v_label := 'yesterday';
+  elsif p_range = 'week' then
+    v_start := v_today - 6; v_end := v_today; v_label := 'the last 7 days';
+  elsif p_range = 'month' then
+    v_start := date_trunc('month', v_today)::date; v_end := v_today; v_label := 'this month';
+  else
+    raise exception 'INVALID_RANGE';
+  end if;
+
+  select jsonb_build_object(
+    'not_cancelled', count(*) filter (where status <> 'cancelled'),
+    'pending_approval', count(*) filter (where status = 'pending_approval'),
+    'approved', count(*) filter (where status in ('awaiting_payment', 'paid', 'preparing', 'out_for_delivery', 'ready_for_pickup')),
+    'delivered', count(*) filter (where status = 'delivered'),
+    'cancelled', count(*) filter (where status = 'cancelled')
+  ),
+  coalesce(sum(total) filter (where status = any (v_committed)), 0)
+  into v_orders, v_orders_total
+  from orders
+  where menu_date between v_start and v_end;
+
+  select coalesce(sum(amount + delivery_fee), 0) into v_manual_total
+  from manual_sales
+  where sale_date between v_start and v_end;
+
+  select jsonb_build_object(
+    'total', v_orders_total + v_manual_total,
+    'from_orders', v_orders_total,
+    'from_manual_sales', v_manual_total,
+    'awaiting_payment', coalesce(sum(total) filter (where status = 'awaiting_payment'), 0),
+    'waiting_for_approval', coalesce(sum(total) filter (where status = 'pending_approval'), 0)
+  ) into v_sales
+  from orders
+  where menu_date between v_start and v_end;
+
+  select coalesce(jsonb_agg(row_to_json(b) order by b.quantity desc, b.name), '[]'::jsonb) into v_best
+  from (
+    select oi.item_name || ' (' || oi.variation_label || ')' as name,
+           sum(oi.quantity)::int as quantity,
+           sum(oi.quantity * oi.unit_price)::bigint as amount
+    from order_items oi
+    join orders o on o.id = oi.order_id
+    where oi.menu_date between v_start and v_end
+      and o.status = any (v_committed)
+    group by 1
+    order by 2 desc, 1
+    limit 5
+  ) b;
+
+  return jsonb_build_object(
+    'range', p_range, 'label', v_label, 'start', v_start, 'end', v_end,
+    'orders', v_orders, 'sales', v_sales, 'best_sellers', v_best
+  );
+end;
+$$;
+
+create or replace function owner_orders(p_range text, p_status text default null)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_today date := (now() at time zone 'Africa/Lagos')::date;
+  v_start date;
+  v_end date;
+  v_rows jsonb;
+begin
+  if not (is_owner() or auth.role() = 'service_role') then
+    raise exception 'NOT_ALLOWED';
+  end if;
+
+  if p_range = 'today' then v_start := v_today; v_end := v_today;
+  elsif p_range = 'yesterday' then v_start := v_today - 1; v_end := v_today - 1;
+  elsif p_range = 'week' then v_start := v_today - 6; v_end := v_today;
+  elsif p_range = 'month' then v_start := date_trunc('month', v_today)::date; v_end := v_today;
+  else raise exception 'INVALID_RANGE';
+  end if;
+
+  select coalesce(jsonb_agg(row_to_json(r) order by r.created_at desc), '[]'::jsonb) into v_rows
+  from (
+    select order_number, customer_name, total, status, delivery_type, source, created_at
+    from orders
+    where menu_date between v_start and v_end
+      and (p_status is null or status = p_status)
+    order by created_at desc
+    limit 25
+  ) r;
+
+  return jsonb_build_object('start', v_start, 'end', v_end, 'status_filter', p_status, 'orders', v_rows);
+end;
+$$;
+
+revoke all on function owner_report(text) from public, anon;
+grant execute on function owner_report(text) to authenticated, service_role;
+revoke all on function owner_orders(text, text) from public, anon;
+grant execute on function owner_orders(text, text) to authenticated, service_role;
+
+-- ============================================================================
+-- PHASE 7 (step 3): OWNER ACTIONS WITH CONFIRMATION
+-- ============================================================================
+-- The assistant never changes anything directly. It PROPOSES; this table holds
+-- the proposal; the owner's next message "YES" (recognised by code) CONFIRMS
+-- it. Because the proposal lives here, not in the AI's memory, "YES" always
+-- means exactly the one stored action. A proposal expires after 5 minutes.
+-- Only our Edge Functions (service key) can call these functions.
+
+create table if not exists owner_pending_actions (
+  id uuid primary key default gen_random_uuid(),
+  actor text not null,                     -- 'dashboard: you@mail.com' or 'whatsapp: 2348...'
+  kind text not null check (kind in ('set_sold_out', 'set_available', 'set_portions', 'approve_order', 'reject_order', 'set_price', 'set_prices', 'add_order', 'add_to_menu', 'remove_from_menu', 'take_over_chat', 'hand_back_chat')),
+  params jsonb not null,                   -- already resolved to exact ids
+  summary text not null,                   -- what the owner was told
+  status text not null default 'pending' check (status in ('pending', 'done', 'cancelled', 'expired', 'failed')),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '5 minutes'),
+  resolved_at timestamptz
+);
+create index if not exists owner_pending_actor_idx on owner_pending_actions(actor, status);
+alter table owner_pending_actions enable row level security;
+-- No policies: nobody but the service key can read or write this table.
+-- (Older copies of this table only allowed four kinds: widen the list.)
+alter table owner_pending_actions drop constraint if exists owner_pending_actions_kind_check;
+alter table owner_pending_actions add constraint owner_pending_actions_kind_check
+  check (kind in ('set_sold_out', 'set_available', 'set_portions', 'approve_order', 'reject_order', 'set_price', 'set_prices', 'add_order', 'add_to_menu', 'remove_from_menu', 'take_over_chat', 'hand_back_chat'));
+-- Risky actions (many prices at once, a big price jump) need the owner's PIN
+-- instead of a plain YES.
+alter table owner_pending_actions add column if not exists needs_pin boolean not null default false;
+
+-- ---------------------------------------------------------------------------
+-- The owner PIN. Stored as a salted hash, never in plain text. Five wrong
+-- tries lock it for 15 minutes. Only the functions below can touch this table.
+-- ---------------------------------------------------------------------------
+create table if not exists owner_security (
+  id boolean primary key default true check (id),
+  pin_salt text,
+  pin_hash text,
+  failed_attempts integer not null default 0,
+  locked_until timestamptz,
+  updated_at timestamptz not null default now()
+);
+insert into owner_security (id) values (true) on conflict (id) do nothing;
+alter table owner_security enable row level security;
+-- No policies: not even the logged-in owner's browser can read it.
+
+-- Internal check (no caller test: only other security-definer functions below
+-- call it). Returns ok / wrong / locked / not_set.
+create or replace function owner_pin_check(p_pin text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v owner_security;
+  v_failed integer;
+  v_until timestamptz;
+begin
+  select * into v from owner_security where id for update;
+  if v.pin_hash is null then return jsonb_build_object('status', 'not_set'); end if;
+  if v.locked_until is not null and v.locked_until > now() then
+    return jsonb_build_object('status', 'locked', 'until', v.locked_until);
+  end if;
+  if encode(sha256(convert_to(v.pin_salt || ':' || btrim(coalesce(p_pin, '')), 'UTF8')), 'hex') = v.pin_hash then
+    update owner_security set failed_attempts = 0, locked_until = null where id;
+    return jsonb_build_object('status', 'ok');
+  end if;
+  v_failed := v.failed_attempts + 1;
+  if v_failed >= 5 then
+    v_until := now() + interval '15 minutes';
+    update owner_security set failed_attempts = 0, locked_until = v_until where id;
+    return jsonb_build_object('status', 'locked', 'until', v_until);
+  end if;
+  update owner_security set failed_attempts = v_failed where id;
+  return jsonb_build_object('status', 'wrong', 'attempts_left', 5 - v_failed);
+end;
+$$;
+revoke all on function owner_pin_check(text) from public, anon, authenticated, service_role;
+
+-- Set or change the PIN (the logged-in owner only). Changing an existing PIN
+-- needs the current one.
+create or replace function set_owner_pin(p_new text, p_current text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v owner_security;
+  v_check jsonb;
+  v_salt text := gen_random_uuid()::text;
+begin
+  if not is_owner() then raise exception 'NOT_ALLOWED'; end if;
+  if p_new is null or p_new !~ '^[0-9]{4,6}$' then raise exception 'INVALID_PIN'; end if;
+  select * into v from owner_security where id for update;
+  if v.pin_hash is not null then
+    v_check := owner_pin_check(p_current);
+    if v_check->>'status' <> 'ok' then return v_check; end if;
+  end if;
+  update owner_security
+     set pin_salt = v_salt,
+         pin_hash = encode(sha256(convert_to(v_salt || ':' || p_new, 'UTF8')), 'hex'),
+         failed_attempts = 0, locked_until = null, updated_at = now()
+   where id;
+  insert into admin_log (actor, action, summary)
+  values (admin_actor(), 'owner_security.set_pin',
+          case when v.pin_hash is null then 'Set the owner PIN' else 'Changed the owner PIN' end);
+  return jsonb_build_object('status', 'ok');
+end;
+$$;
+
+create or replace function owner_has_pin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select is_owner() and exists (select 1 from owner_security where id and pin_hash is not null);
+$$;
+
+revoke all on function set_owner_pin(text, text) from public, anon;
+grant execute on function set_owner_pin(text, text) to authenticated;
+revoke all on function owner_has_pin() from public, anon;
+grant execute on function owner_has_pin() to authenticated;
+
+-- Forgiving name match: "white rice and stew" finds "White Rice & Stew" and
+-- "Rice and Stew (White)". Words like and / with / the are ignored; every other
+-- word of the query must appear in the name (or one name contains the other).
+create or replace function owner_name_match(p_name text, p_query text)
+returns boolean
+language plpgsql
+immutable
+as $$
+declare
+  n text := btrim(regexp_replace(lower(replace(coalesce(p_name, ''), '&', ' and ')), '[^a-z0-9]+', ' ', 'g'));
+  q text := btrim(regexp_replace(lower(replace(coalesce(p_query, ''), '&', ' and ')), '[^a-z0-9]+', ' ', 'g'));
+  stop text[] := array['and', 'with', 'the', 'a', 'of', 'in', 'on', 'to', 'for', 'please', 'add'];
+  tok text;
+  checked integer := 0;
+begin
+  if q = '' or n = '' then return false; end if;
+  if n like '%' || q || '%' or q like '%' || n || '%' then return true; end if;
+  for tok in select unnest(string_to_array(q, ' ')) loop
+    if tok = '' or tok = any (stop) then continue; end if;
+    checked := checked + 1;
+    if position(tok in n) = 0 then return false; end if;
+  end loop;
+  return checked > 0;
+end;
+$$;
+revoke all on function owner_name_match(text, text) from public, anon, authenticated, service_role;
+
+-- What is on a day's menu (and what could be added), with exact figures.
+create or replace function owner_menu(p_day text default 'today')
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_today date := (now() at time zone 'Africa/Lagos')::date;
+  v_date date;
+  v_dm daily_menus;
+  v_items jsonb;
+  v_rest jsonb;
+begin
+  if not (is_owner() or auth.role() = 'service_role') then raise exception 'NOT_ALLOWED'; end if;
+  v_date := case p_day when 'today' then v_today when 'tomorrow' then v_today + 1 else null end;
+  if v_date is null then raise exception 'INVALID_DAY'; end if;
+  select * into v_dm from daily_menus where menu_date = v_date;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'item', mi.name, 'category', mi.category, 'label', v.label, 'price', v.price,
+           'slots_left', s.slots_left, 'slots_total', s.slots_total) order by mi.category, mi.name, v.sort_order, v.label), '[]'::jsonb)
+    into v_items
+    from daily_menu_slots s
+    join daily_menus d on d.id = s.daily_menu_id
+    join menu_items mi on mi.id = s.menu_item_id
+    join menu_item_variations v on v.id = s.variation_id
+   where d.menu_date = v_date;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'item', mi.name, 'category', mi.category, 'label', v.label, 'price', v.price)
+           order by mi.category, mi.name, v.sort_order, v.label), '[]'::jsonb)
+    into v_rest
+    from menu_items mi
+    join menu_item_variations v on v.menu_item_id = mi.id
+   where mi.active
+     and not exists (
+       select 1 from daily_menu_slots s join daily_menus d on d.id = s.daily_menu_id
+        where d.menu_date = v_date and s.variation_id = v.id);
+
+  return jsonb_build_object('day', p_day, 'date', v_date, 'menu_exists', v_dm.id is not null,
+                            'published', coalesce(v_dm.published, false),
+                            'on_menu', v_items, 'not_on_menu', v_rest);
+end;
+$$;
+revoke all on function owner_menu(text) from public, anon;
+grant execute on function owner_menu(text) to authenticated, service_role;
+
+-- Finds ONE customer chat from what the owner typed: a name, a phone number,
+-- or "latest". Says exactly why if it cannot.
+create or replace function owner_find_chat(p_query text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_q text := btrim(coalesce(p_query, ''));
+  v_digits text := regexp_replace(coalesce(p_query, ''), '\D', '', 'g');
+  v_phone text := normalize_phone(p_query);
+  v_ids uuid[];
+  v_n integer;
+  v_row record;
+begin
+  if v_q = '' then return jsonb_build_object('status', 'invalid', 'message', 'Whose chat? Give a name or a phone number.'); end if;
+
+  if lower(v_q) in ('latest', 'last', 'newest', 'the latest', 'the last', 'latest chat', 'the latest chat', 'last chat', 'the last chat') then
+    select array_agg(id) into v_ids from (select id from conversations order by last_message_at desc limit 1) x;
+  elsif length(v_digits) >= 7 then
+    select array_agg(id) into v_ids from (
+      select id from conversations
+       where wa_phone = v_phone
+          or regexp_replace(coalesce(customer_contact, ''), '\D', '', 'g') like '%' || right(v_digits, 9)
+       order by last_message_at desc limit 5) x;
+  else
+    select array_agg(id) into v_ids from (
+      select id from conversations
+       where customer_name is not null and owner_name_match(customer_name, v_q)
+       order by last_message_at desc limit 5) x;
+  end if;
+
+  v_n := coalesce(array_length(v_ids, 1), 0);
+  if v_n = 0 then
+    return jsonb_build_object('status', 'not_found', 'message', 'I could not find a chat for "' || v_q || '". Try the phone number, or ask me which chats need you.');
+  end if;
+  if v_n > 1 then
+    return jsonb_build_object('status', 'ambiguous', 'options',
+      (select jsonb_agg(jsonb_build_object(
+                'name', coalesce(c.customer_name, c.customer_contact, 'Website visitor'),
+                'contact', c.customer_contact, 'channel', c.channel,
+                'last_message_at', c.last_message_at, 'last', left(coalesce(c.last_preview, ''), 60))
+              order by c.last_message_at desc)
+         from conversations c where c.id = any (v_ids)));
+  end if;
+
+  select id, mode, channel, customer_contact, coalesce(customer_name, customer_contact, 'Website visitor') as name,
+         left(coalesce(last_preview, ''), 80) as preview
+    into v_row from conversations where id = v_ids[1];
+  return jsonb_build_object('status', 'ok', 'conversation_id', v_row.id, 'name', v_row.name, 'mode', v_row.mode,
+                            'channel', v_row.channel, 'contact', v_row.customer_contact, 'preview', v_row.preview);
+end;
+$$;
+revoke all on function owner_find_chat(text) from public, anon, authenticated, service_role;
+
+-- The chats the owner may care about, for the assistant to read out.
+create or replace function owner_chats(p_filter text default 'needs_you')
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_rows jsonb;
+begin
+  if not (is_owner() or auth.role() = 'service_role') then raise exception 'NOT_ALLOWED'; end if;
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'name', coalesce(c.customer_name, c.customer_contact, 'Website visitor'),
+           'contact', c.customer_contact, 'channel', c.channel, 'mode', c.mode,
+           'unread', c.owner_unread, 'reason', c.handoff_reason,
+           'last', left(coalesce(c.last_preview, ''), 80), 'last_message_at', c.last_message_at)
+           order by c.last_message_at desc), '[]'::jsonb)
+    into v_rows
+    from (select * from conversations
+           where (p_filter = 'all' or mode = 'owner' or owner_unread)
+           order by last_message_at desc limit 15) c;
+  return jsonb_build_object('filter', p_filter, 'chats', v_rows);
+end;
+$$;
+revoke all on function owner_chats(text) from public, anon;
+grant execute on function owner_chats(text) to authenticated, service_role;
+
+-- Finds ONE menu slot (an item + size on a published day) from words, or says
+-- exactly why it cannot. Used by the phone-order flow.
+create or replace function owner_resolve_menu_slot(p_item text, p_variation text, p_date date)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_item text := btrim(coalesce(p_item, ''));
+  v_var text := nullif(btrim(coalesce(p_variation, '')), '');
+  v_names text[];
+  v_name text;
+  v_n integer;
+  v_row record;
+begin
+  if v_item ~ '\(.+\)\s*$' then
+    if v_var is null then v_var := nullif(btrim(substring(v_item from '\(([^()]*)\)\s*$')), ''); end if;
+    v_item := btrim(regexp_replace(v_item, '\s*\([^()]*\)\s*$', ''));
+  end if;
+  if char_length(v_item) < 2 then
+    return jsonb_build_object('status', 'invalid', 'message', 'Which item?');
+  end if;
+
+  select array_agg(distinct mi.name order by mi.name) into v_names
+    from daily_menu_slots s
+    join daily_menus d on d.id = s.daily_menu_id and d.published
+    join menu_items mi on mi.id = s.menu_item_id
+   where d.menu_date = p_date
+     and owner_name_match(mi.name, v_item);
+  if v_names is null then
+    return jsonb_build_object('status', 'not_found', 'message', 'No item matching "' || v_item || '" is on that day''s menu.');
+  end if;
+  if array_length(v_names, 1) > 1 then
+    select n into v_name from unnest(v_names) n where lower(n) = lower(v_item) limit 1;
+    if v_name is null then return jsonb_build_object('status', 'ambiguous', 'options', to_jsonb(v_names)); end if;
+  else
+    v_name := v_names[1];
+  end if;
+
+  select count(*) into v_n
+    from daily_menu_slots s
+    join daily_menus d on d.id = s.daily_menu_id and d.published
+    join menu_items mi on mi.id = s.menu_item_id
+    join menu_item_variations v on v.id = s.variation_id
+   where d.menu_date = p_date and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%');
+  if v_n = 0 then
+    return jsonb_build_object('status', 'not_found', 'message', 'No size matching "' || v_var || '" for ' || v_name || '.');
+  end if;
+  if v_n > 1 then
+    return jsonb_build_object('status', 'ambiguous_size', 'item', v_name, 'options',
+      (select jsonb_agg(v.label || ' (₦' || to_char(v.price, 'FM999,999,999') || ')' order by v.sort_order, v.label)
+         from daily_menu_slots s
+         join daily_menus d on d.id = s.daily_menu_id and d.published
+         join menu_items mi on mi.id = s.menu_item_id
+         join menu_item_variations v on v.id = s.variation_id
+        where d.menu_date = p_date and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%')));
+  end if;
+
+  select s.id as slot_id, v.id as variation_id, mi.name as item, v.label, v.price, s.slots_left
+    into v_row
+    from daily_menu_slots s
+    join daily_menus d on d.id = s.daily_menu_id and d.published
+    join menu_items mi on mi.id = s.menu_item_id
+    join menu_item_variations v on v.id = s.variation_id
+   where d.menu_date = p_date and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%');
+  return jsonb_build_object('status', 'ok', 'slot_id', v_row.slot_id, 'variation_id', v_row.variation_id,
+                            'item', v_row.item, 'label', v_row.label, 'price', v_row.price, 'slots_left', v_row.slots_left);
+end;
+$$;
+revoke all on function owner_resolve_menu_slot(text, text, date) from public, anon, authenticated, service_role;
+
+create or replace function owner_propose_action(p_actor text, p_kind text, p_params jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_today date := (now() at time zone 'Africa/Lagos')::date;
+  v_day text := coalesce(p_params->>'day', 'today');
+  v_date date;
+  v_item text := btrim(coalesce(p_params->>'item', ''));
+  v_var text := nullif(btrim(coalesce(p_params->>'variation', '')), '');
+  v_names text[];
+  v_name text;
+  v_slots jsonb;
+  v_summary text;
+  v_order orders;
+  v_number text := upper(btrim(coalesce(p_params->>'order_number', '')));
+  v_label text;
+  v_id uuid;
+  v_portions integer;
+  v_changes jsonb;
+  v_newp integer;
+  v_pct numeric;
+  v_cat text;
+  v_contains text;
+  v_total_sizes integer;
+  v_pin boolean;
+  v_count integer;
+  v_log admin_log;
+  v_line jsonb;
+  v_lines jsonb := '[]'::jsonb;
+  v_res jsonb;
+  v_qty integer;
+  v_sub integer;
+  v_fee integer;
+  v_paid boolean;
+  v_pm text;
+  v_cname text;
+  v_phone text;
+  v_dtype text;
+  v_addr text;
+  v_note text;
+  v_ch jsonb;
+  v_ok boolean;
+  v_row record;
+  v_dry boolean;
+  v_batch jsonb;
+begin
+  if auth.role() <> 'service_role' then raise exception 'NOT_ALLOWED'; end if;
+  if btrim(coalesce(p_actor, '')) = '' then raise exception 'NO_ACTOR'; end if;
+
+  -- "dry" = resolve only: used by the batch code below, never stored.
+  v_dry := coalesce(p_params->>'dry', '') = 'true';
+
+  -- ---- Several items in ONE request: one proposal, one YES ---------------
+  if not v_dry and jsonb_typeof(p_params->'items') = 'array'
+     and p_kind in ('set_sold_out', 'set_available', 'set_portions', 'add_to_menu') then
+    if jsonb_array_length(p_params->'items') not between 1 and 20 then
+      return jsonb_build_object('status', 'invalid', 'message', 'Give between 1 and 20 items at a time.');
+    end if;
+    v_day := coalesce(p_params->>'day', 'today');
+    v_date := case v_day when 'today' then v_today when 'tomorrow' then v_today + 1 else null end;
+    if v_date is null then return jsonb_build_object('status', 'invalid', 'message', 'The day must be today or tomorrow.'); end if;
+    v_label := case when v_day = 'tomorrow' then 'tomorrow' else 'today' end;
+    v_slots := '[]'::jsonb;
+    v_lines := '[]'::jsonb;
+    v_ok := false; -- will mean: a menu has to be created
+    for v_line in select * from jsonb_array_elements(p_params->'items') loop
+      v_res := owner_propose_action(p_actor, p_kind, jsonb_build_object(
+        'item', v_line->>'item', 'variation', v_line->>'variation', 'day', v_day,
+        'portions', coalesce(v_line->>'portions', p_params->>'portions'), 'dry', 'true'));
+      if v_res->>'status' <> 'dry_ok' then
+        return v_res || jsonb_build_object('failed_item', v_line->>'item');
+      end if;
+      if p_kind = 'add_to_menu' then
+        v_lines := v_lines || jsonb_build_array(v_res->'add');
+        if (v_res->>'no_menu')::boolean then v_ok := true; end if;
+      else
+        v_slots := v_slots || (v_res->'slots');
+      end if;
+    end loop;
+
+    if p_kind = 'add_to_menu' then
+      select jsonb_agg(e) into v_lines
+        from (select distinct on (e->>'variation_id') e from jsonb_array_elements(v_lines) e) x;
+      select 'Add ' || jsonb_array_length(v_lines) || case when jsonb_array_length(v_lines) = 1 then ' item' else ' items' end
+             || ' to ' || v_label || '''s menu: '
+             || string_agg((e->>'item') || ' (' || (e->>'label') || ', ₦' || to_char((e->>'price')::int, 'FM999,999,999')
+                           || ') x ' || (e->>'portions') || ' portions', '; ')
+             || '.' || case when v_ok then ' There is no menu for ' || v_label || ' yet, so one will be created and published (customers will see it).' else '' end
+        into v_summary from jsonb_array_elements(v_lines) e;
+      update owner_pending_actions set status = 'cancelled', resolved_at = now() where actor = p_actor and status = 'pending';
+      insert into owner_pending_actions (actor, kind, params, summary)
+      values (p_actor, 'add_to_menu', jsonb_build_object('date', v_date, 'adds', v_lines), v_summary)
+      returning id into v_id;
+    else
+      select jsonb_agg(e) into v_slots
+        from (select distinct on (e->>'slot_id') e from jsonb_array_elements(v_slots) e) x;
+      select case p_kind when 'set_sold_out' then 'Mark ' || jsonb_array_length(v_slots) || ' items sold out for '
+                         when 'set_available' then 'Make ' || jsonb_array_length(v_slots) || ' items available again for '
+                         else 'Set ' || jsonb_array_length(v_slots) || ' items to their new portions for ' end
+             || v_label || ': '
+             || string_agg((e->>'item') || ' (' || (e->>'label') || ')'
+                           || case p_kind when 'set_portions' then ' to ' || (e->>'to_left') || ' left'
+                                          when 'set_available' then ' to ' || (e->>'to_left') || ' left'
+                                          else ' (now ' || (e->>'from_left') || ' left)' end, '; ')
+             || '.'
+        into v_summary from jsonb_array_elements(v_slots) e;
+      update owner_pending_actions set status = 'cancelled', resolved_at = now() where actor = p_actor and status = 'pending';
+      insert into owner_pending_actions (actor, kind, params, summary)
+      values (p_actor, p_kind, jsonb_build_object('date', v_date, 'slots', v_slots), v_summary)
+      returning id into v_id;
+    end if;
+    return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary, 'needs_pin', false);
+  end if;
+
+  -- Only one open proposal per person: a new one replaces the old.
+  if not v_dry then
+    update owner_pending_actions set status = 'cancelled', resolved_at = now()
+     where actor = p_actor and status = 'pending';
+  end if;
+
+  if p_kind in ('set_sold_out', 'set_available', 'set_portions') then
+    if p_kind = 'set_portions' then
+      begin
+        v_portions := (p_params->>'portions')::integer;
+      exception when others then
+        v_portions := null;
+      end;
+      if v_portions is null or v_portions < 0 or v_portions > 500 then
+        return jsonb_build_object('status', 'invalid', 'message', 'How many portions? Give a whole number from 0 to 500.');
+      end if;
+    end if;
+    -- "Chicken Curry Sauce with Steamed Rice (Regular)": the size in brackets is
+    -- the variation, not part of the dish name.
+    if v_item ~ '\(.+\)\s*$' then
+      if v_var is null then
+        v_var := nullif(btrim(substring(v_item from '\(([^()]*)\)\s*$')), '');
+      end if;
+      v_item := btrim(regexp_replace(v_item, '\s*\([^()]*\)\s*$', ''));
+    end if;
+    v_date := case v_day when 'today' then v_today when 'tomorrow' then v_today + 1 else null end;
+    if v_date is null then return jsonb_build_object('status', 'invalid', 'message', 'The day must be today or tomorrow.'); end if;
+    if char_length(v_item) < 2 then return jsonb_build_object('status', 'invalid', 'message', 'Which item?'); end if;
+    v_label := case when v_day = 'tomorrow' then 'tomorrow' else 'today' end;
+
+    select array_agg(distinct mi.name order by mi.name) into v_names
+      from daily_menu_slots s
+      join daily_menus d on d.id = s.daily_menu_id
+      join menu_items mi on mi.id = s.menu_item_id
+     where d.menu_date = v_date
+       and owner_name_match(mi.name, v_item);
+
+    if v_names is null then
+      return jsonb_build_object('status', 'not_found',
+        'message', 'No item matching "' || v_item || '" is on the menu for ' || v_label || '.');
+    end if;
+    if array_length(v_names, 1) > 1 then
+      select n into v_name from unnest(v_names) n where lower(n) = lower(v_item) limit 1;
+      if v_name is null then
+        return jsonb_build_object('status', 'ambiguous', 'options', to_jsonb(v_names));
+      end if;
+    else
+      v_name := v_names[1];
+    end if;
+
+    select jsonb_agg(jsonb_build_object(
+             'slot_id', s.id, 'item', mi.name, 'label', v.label,
+             'from_left', s.slots_left,
+             'from_total', s.slots_total,
+             'to_total', case when p_kind = 'set_portions' then greatest(s.slots_total, v_portions) else s.slots_total end,
+             'to_left', case
+               when p_kind = 'set_sold_out' then 0
+               when p_kind = 'set_portions' then v_portions
+               else least(s.slots_total, coalesce((
+                      select (e->>'slots_left')::int
+                        from admin_log l, jsonb_array_elements(l.before_value->'slots') e
+                       where l.action = 'owner_action.set_sold_out'
+                         and e->>'slot_id' = s.id::text
+                       order by l.id desc limit 1), s.slots_total))
+             end) order by v.sort_order, v.label)
+      into v_slots
+      from daily_menu_slots s
+      join daily_menus d on d.id = s.daily_menu_id
+      join menu_items mi on mi.id = s.menu_item_id
+      join menu_item_variations v on v.id = s.variation_id
+     where d.menu_date = v_date
+       and mi.name = v_name
+       and (v_var is null or v.label ilike '%' || v_var || '%')
+       and (case
+              when p_kind = 'set_sold_out' then s.slots_left > 0
+              when p_kind = 'set_portions' then (s.slots_left <> v_portions or s.slots_total < v_portions)
+              else (s.slots_left = 0 and s.slots_total > 0)
+            end);
+
+    if v_slots is null then
+      -- nothing to change: explain why
+      if exists (
+        select 1 from daily_menu_slots s join daily_menus d on d.id = s.daily_menu_id
+          join menu_items mi on mi.id = s.menu_item_id join menu_item_variations v on v.id = s.variation_id
+         where d.menu_date = v_date and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%')
+      ) then
+        return jsonb_build_object('status', 'no_change', 'message',
+          case when p_kind = 'set_sold_out'
+               then v_name || ' is already sold out for ' || v_label || '.'
+               when p_kind = 'set_portions'
+               then v_name || ' already has ' || v_portions || ' portions left for ' || v_label || '.'
+               else v_name || ' is already available for ' || v_label || '.' end);
+      end if;
+      return jsonb_build_object('status', 'not_found',
+        'message', 'No size matching "' || v_var || '" for ' || v_name || ' on the ' || v_label || ' menu.');
+    end if;
+
+    if p_kind = 'set_portions' then
+      select 'Set ' || v_name || ' (' || string_agg(e->>'label', ', ') || ') to ' || v_portions
+             || ' portions left for ' || v_label || ' (now: ' || string_agg(e->>'from_left', ', ') || ' left).'
+             || case when bool_or((e->>'to_total')::int > (e->>'from_total')::int)
+                     then ' The total for the day also rises to ' || v_portions || '.' else '' end
+        into v_summary
+        from jsonb_array_elements(v_slots) e;
+    else
+    select
+      case when p_kind = 'set_sold_out' then 'Mark ' else 'Make ' end
+      || v_name || ' (' || string_agg(e->>'label', ', ') || ')'
+      || case when p_kind = 'set_sold_out' then ' sold out for ' else ' available again for ' end || v_label || '. '
+      || case when p_kind = 'set_sold_out' then 'Remaining portions will be set to 0 (now: '
+              else 'Remaining portions will be set to ' end
+      || string_agg(
+           case when p_kind = 'set_sold_out' then (e->>'from_left') else (e->>'label') || ': ' || (e->>'to_left') end,
+           ', ')
+      || case when p_kind = 'set_sold_out' then ' left).' else '.' end
+      into v_summary
+      from jsonb_array_elements(v_slots) e;
+    end if;
+
+    if v_dry then
+      return jsonb_build_object('status', 'dry_ok', 'slots', v_slots, 'summary', v_summary);
+    end if;
+    insert into owner_pending_actions (actor, kind, params, summary)
+    values (p_actor, p_kind, jsonb_build_object('date', v_date, 'slots', v_slots), v_summary)
+    returning id into v_id;
+    return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary);
+
+  elsif p_kind in ('approve_order', 'reject_order') then
+    if v_number = '' then return jsonb_build_object('status', 'invalid', 'message', 'Which order number?'); end if;
+    select * into v_order from orders where order_number = v_number;
+    if v_order.id is null then
+      return jsonb_build_object('status', 'not_found', 'message', 'There is no order ' || v_number || '.');
+    end if;
+    -- Rejecting normally applies to orders waiting for approval. Orders the
+    -- owner added by phone can also be cancelled (to undo a mistake) until
+    -- they are on their way.
+    if not (v_order.status = 'pending_approval'
+            or (p_kind = 'reject_order' and v_order.source = 'owner'
+                and v_order.status in ('awaiting_payment', 'paid', 'preparing'))) then
+      return jsonb_build_object('status', 'no_change', 'message',
+        'Order ' || v_number || ' is not waiting for approval (it is ' || replace(v_order.status, '_', ' ') || ').');
+    end if;
+
+    v_summary := case when p_kind = 'approve_order' then 'Approve ' else 'Reject ' end
+      || 'order ' || v_order.order_number || ' for ' || v_order.customer_name
+      || ', ₦' || to_char(v_order.total, 'FM999,999,999') || ' (' || replace(v_order.delivery_type, 'dispatch', 'delivery') || ', via ' || v_order.source || '). '
+      || case when p_kind = 'approve_order'
+              then 'It moves to awaiting payment and the customer is told.'
+              else 'It is cancelled, the held portions go back on the menu and the customer is told.' end;
+
+    insert into owner_pending_actions (actor, kind, params, summary)
+    values (p_actor, p_kind,
+            jsonb_build_object('order_id', v_order.id, 'order_number', v_order.order_number, 'from_status', v_order.status),
+            v_summary)
+    returning id into v_id;
+    return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary);
+
+  elsif p_kind in ('set_price', 'set_prices') then
+    if p_kind = 'set_price' then
+      begin
+        v_newp := (p_params->>'price')::integer;
+      exception when others then
+        v_newp := null;
+      end;
+      if v_newp is null or v_newp < 1 or v_newp > 500000 then
+        return jsonb_build_object('status', 'invalid', 'message', 'Give the new price as a whole number of naira, from ₦1 to ₦500,000.');
+      end if;
+      if v_item ~ '\(.+\)\s*$' then
+        if v_var is null then v_var := nullif(btrim(substring(v_item from '\(([^()]*)\)\s*$')), ''); end if;
+        v_item := btrim(regexp_replace(v_item, '\s*\([^()]*\)\s*$', ''));
+      end if;
+      if char_length(v_item) < 2 then return jsonb_build_object('status', 'invalid', 'message', 'Which item?'); end if;
+
+      select array_agg(distinct mi.name order by mi.name) into v_names
+        from menu_items mi
+       where mi.active and owner_name_match(mi.name, v_item);
+      if v_names is null then
+        return jsonb_build_object('status', 'not_found', 'message', 'No menu item matches "' || v_item || '".');
+      end if;
+      if array_length(v_names, 1) > 1 then
+        select n into v_name from unnest(v_names) n where lower(n) = lower(v_item) limit 1;
+        if v_name is null then return jsonb_build_object('status', 'ambiguous', 'options', to_jsonb(v_names)); end if;
+      else
+        v_name := v_names[1];
+      end if;
+
+      select count(*) into v_total_sizes
+        from menu_items mi join menu_item_variations v on v.menu_item_id = mi.id
+       where mi.active and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%');
+      if v_total_sizes = 0 then
+        return jsonb_build_object('status', 'not_found', 'message', 'No size matching "' || v_var || '" for ' || v_name || '.');
+      end if;
+      if v_var is null and v_total_sizes > 1 then
+        return jsonb_build_object('status', 'ambiguous_size', 'item', v_name, 'options',
+          (select jsonb_agg(v.label || ' (₦' || to_char(v.price, 'FM999,999,999') || ')' order by v.sort_order, v.label)
+             from menu_items mi join menu_item_variations v on v.menu_item_id = mi.id
+            where mi.active and mi.name = v_name));
+      end if;
+
+      select jsonb_agg(jsonb_build_object('variation_id', v.id, 'item', mi.name, 'label', v.label,
+                                          'old_price', v.price, 'new_price', v_newp) order by v.sort_order, v.label)
+        into v_changes
+        from menu_items mi join menu_item_variations v on v.menu_item_id = mi.id
+       where mi.active and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%')
+         and v.price <> v_newp;
+      if v_changes is null then
+        return jsonb_build_object('status', 'no_change', 'message', v_name || ' already costs ₦' || to_char(v_newp, 'FM999,999,999') || '.');
+      end if;
+
+    else
+      begin
+        v_pct := (p_params->>'percent')::numeric;
+      exception when others then
+        v_pct := null;
+      end;
+      if v_pct is null or v_pct = 0 or v_pct < -50 or v_pct > 100 then
+        return jsonb_build_object('status', 'invalid', 'message', 'Give a percentage between -50 and 100 (for example 10 to raise prices by 10%).');
+      end if;
+      v_cat := nullif(lower(btrim(coalesce(p_params->>'category', ''))), '');
+      if v_cat is not null and v_cat not in ('food', 'drink') then
+        return jsonb_build_object('status', 'invalid', 'message', 'The category must be food or drink.');
+      end if;
+      v_contains := nullif(btrim(coalesce(p_params->>'name_contains', '')), '');
+
+      select jsonb_agg(jsonb_build_object('variation_id', v.id, 'item', mi.name, 'label', v.label,
+                                          'old_price', v.price,
+                                          'new_price', greatest(50, (round(v.price * (1 + v_pct / 100) / 50) * 50)::integer))
+                       order by mi.name, v.sort_order, v.label)
+        into v_changes
+        from menu_items mi join menu_item_variations v on v.menu_item_id = mi.id
+       where mi.active
+         and (v_cat is null or mi.category = v_cat)
+         and (v_contains is null or mi.name ilike '%' || v_contains || '%')
+         and greatest(50, (round(v.price * (1 + v_pct / 100) / 50) * 50)::integer) <> v.price;
+      if v_changes is null then
+        return jsonb_build_object('status', 'no_change', 'message', 'No prices would change with that.');
+      end if;
+      if jsonb_array_length(v_changes) > 60 then
+        return jsonb_build_object('status', 'invalid', 'message', 'That would change more than 60 prices. Narrow it down (a category or part of a name).');
+      end if;
+    end if;
+
+    v_count := jsonb_array_length(v_changes);
+    -- Risky = more than one price at once, or any price moving by more than 25%.
+    select v_count > 1 or bool_or(abs((e->>'new_price')::numeric - (e->>'old_price')::numeric) > 0.25 * (e->>'old_price')::numeric)
+      into v_pin from jsonb_array_elements(v_changes) e;
+
+    select case when v_count = 1 then 'Change the price of ' else 'Change ' || v_count || ' prices: ' end
+           || string_agg(
+                (e->>'item') || ' (' || (e->>'label') || ') ₦' || to_char((e->>'old_price')::int, 'FM999,999,999')
+                || ' to ₦' || to_char((e->>'new_price')::int, 'FM999,999,999'),
+                '; ' order by ord)
+           || case when v_count > 8 then ' and ' || (v_count - 8) || ' more' else '' end
+           || '. New orders use the new prices; orders already placed keep theirs.'
+           || case when v_pin then ' This needs your PIN.' else '' end
+      into v_summary
+      from (select e, ord from jsonb_array_elements(v_changes) with ordinality as t(e, ord) where ord <= 8) x;
+
+    insert into owner_pending_actions (actor, kind, params, summary, needs_pin)
+    values (p_actor, p_kind, jsonb_build_object('changes', v_changes), v_summary, v_pin)
+    returning id into v_id;
+    return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary, 'needs_pin', v_pin);
+
+  elsif p_kind = 'add_order' then
+    v_cname := btrim(coalesce(p_params->>'customer_name', ''));
+    v_phone := btrim(coalesce(p_params->>'phone', ''));
+    v_dtype := lower(btrim(coalesce(p_params->>'delivery_type', '')));
+    v_addr := btrim(coalesce(p_params->>'address', ''));
+    v_pm := nullif(btrim(coalesce(p_params->>'payment_method', '')), '');
+    v_note := nullif(btrim(coalesce(p_params->>'note', '')), '');
+    v_paid := lower(coalesce(p_params->>'paid', 'false')) in ('true', 'yes', 'paid', '1');
+    begin
+      v_fee := coalesce(nullif(p_params->>'delivery_fee', '')::integer, 0);
+    exception when others then
+      v_fee := -1;
+    end;
+    v_date := case coalesce(p_params->>'day', 'today') when 'today' then v_today when 'tomorrow' then v_today + 1 else null end;
+    v_label := case when coalesce(p_params->>'day', 'today') = 'tomorrow' then 'tomorrow' else 'today' end;
+
+    if char_length(v_cname) < 2 then return jsonb_build_object('status', 'invalid', 'message', 'What is the customer''s name?'); end if;
+    if normalize_phone(v_phone) is null then return jsonb_build_object('status', 'invalid', 'message', 'That does not look like a phone number.'); end if;
+    if v_dtype not in ('delivery', 'pickup') then return jsonb_build_object('status', 'invalid', 'message', 'Is it delivery or pickup?'); end if;
+    if v_dtype = 'delivery' and char_length(v_addr) < 6 then return jsonb_build_object('status', 'invalid', 'message', 'What is the delivery address?'); end if;
+    if v_fee < 0 or v_fee > 50000 then return jsonb_build_object('status', 'invalid', 'message', 'The delivery fee must be a whole number of naira, up to ₦50,000.'); end if;
+    if v_date is null then return jsonb_build_object('status', 'invalid', 'message', 'The day must be today or tomorrow.'); end if;
+    if jsonb_typeof(p_params->'items') <> 'array' or jsonb_array_length(p_params->'items') not between 1 and 10 then
+      return jsonb_build_object('status', 'invalid', 'message', 'Give between 1 and 10 items.');
+    end if;
+    if v_dtype = 'pickup' then v_fee := 0; end if;
+
+    for v_line in select * from jsonb_array_elements(p_params->'items') loop
+      begin
+        v_qty := (v_line->>'quantity')::integer;
+      exception when others then
+        v_qty := null;
+      end;
+      if v_qty is null or v_qty < 1 or v_qty > 50 then
+        return jsonb_build_object('status', 'invalid', 'message', 'Each quantity must be a whole number from 1 to 50.');
+      end if;
+      v_res := owner_resolve_menu_slot(v_line->>'item', v_line->>'variation', v_date);
+      if v_res->>'status' <> 'ok' then return v_res; end if;
+      v_lines := v_lines || jsonb_build_array(jsonb_build_object(
+        'slot_id', v_res->>'slot_id', 'variation_id', v_res->>'variation_id', 'item', v_res->>'item',
+        'label', v_res->>'label', 'unit_price', (v_res->>'price')::integer, 'quantity', v_qty));
+    end loop;
+
+    -- the same item twice must still fit in what is left
+    select bool_and(t.qty <= s.slots_left) into v_ok
+      from (select (e->>'slot_id')::uuid as slot_id, sum((e->>'quantity')::integer) as qty
+              from jsonb_array_elements(v_lines) e group by 1) t
+      join daily_menu_slots s on s.id = t.slot_id;
+    if not coalesce(v_ok, false) then
+      return jsonb_build_object('status', 'sold_out', 'message',
+        'Not enough portions left for that. Check today''s menu, or set more portions first.');
+    end if;
+
+    select coalesce(sum((e->>'unit_price')::integer * (e->>'quantity')::integer), 0) into v_sub
+      from jsonb_array_elements(v_lines) e;
+
+    select 'Add a phone order for ' || v_cname || ' (' || v_phone || ') for ' || v_label || ': '
+           || string_agg((e->>'quantity') || ' x ' || (e->>'item') || ' (' || (e->>'label') || ') ₦'
+                         || to_char((e->>'unit_price')::int * (e->>'quantity')::int, 'FM999,999,999'), '; ')
+           || '. ' || case when v_dtype = 'delivery'
+                           then 'Delivery to ' || v_addr || case when v_fee > 0 then ' (fee ₦' || to_char(v_fee, 'FM999,999,999') || ')' else ' (no fee entered)' end
+                           else 'Pickup' end
+           || '. Total ₦' || to_char(v_sub + v_fee, 'FM999,999,999') || '. '
+           || case when v_paid then 'Marked PAID' || coalesce(' by ' || v_pm, '') else 'Not yet paid' end
+           || '. Added by owner.'
+      into v_summary
+      from jsonb_array_elements(v_lines) e;
+
+    insert into owner_pending_actions (actor, kind, params, summary)
+    values (p_actor, 'add_order',
+            jsonb_build_object('date', v_date, 'customer_name', v_cname, 'phone', v_phone, 'delivery_type', v_dtype,
+                               'address', case when v_dtype = 'delivery' then v_addr else null end,
+                               'delivery_fee', v_fee, 'paid', v_paid, 'payment_method', v_pm, 'note', v_note,
+                               'lines', v_lines, 'expected_total', v_sub + v_fee),
+            v_summary)
+    returning id into v_id;
+    return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary, 'needs_pin', false);
+
+  elsif p_kind in ('take_over_chat', 'hand_back_chat') then
+    v_res := owner_find_chat(p_params->>'customer');
+    if v_res->>'status' <> 'ok' then return v_res; end if;
+    if p_kind = 'take_over_chat' and v_res->>'mode' = 'owner' then
+      return jsonb_build_object('status', 'no_change', 'message',
+        'You already have ' || (v_res->>'name') || '''s chat: the assistant is not replying to this customer.');
+    end if;
+    if p_kind = 'hand_back_chat' and v_res->>'mode' = 'ai' then
+      return jsonb_build_object('status', 'no_change', 'message',
+        (v_res->>'name') || '''s chat is already with the assistant.');
+    end if;
+    v_summary := case when p_kind = 'take_over_chat'
+        then 'Take over the chat with ' || (v_res->>'name') || ' (' || (v_res->>'channel') || '). Last message: "' || (v_res->>'preview')
+             || '". The assistant will stop replying to this customer until you hand the chat back.'
+        else 'Hand ' || (v_res->>'name') || '''s chat back to the assistant (' || (v_res->>'channel')
+             || '). It will answer the customer''s next message.' end;
+    insert into owner_pending_actions (actor, kind, params, summary)
+    values (p_actor, p_kind,
+            jsonb_build_object('conversation_id', v_res->>'conversation_id', 'name', v_res->>'name',
+                               'channel', v_res->>'channel', 'from_mode', v_res->>'mode'),
+            v_summary)
+    returning id into v_id;
+    return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary, 'needs_pin', false);
+
+  elsif p_kind in ('add_to_menu', 'remove_from_menu') then
+    v_date := case v_day when 'today' then v_today when 'tomorrow' then v_today + 1 else null end;
+    if v_date is null then return jsonb_build_object('status', 'invalid', 'message', 'The day must be today or tomorrow.'); end if;
+    v_label := case when v_day = 'tomorrow' then 'tomorrow' else 'today' end;
+    if v_item ~ '\(.+\)\s*$' then
+      if v_var is null then v_var := nullif(btrim(substring(v_item from '\(([^()]*)\)\s*$')), ''); end if;
+      v_item := btrim(regexp_replace(v_item, '\s*\([^()]*\)\s*$', ''));
+    end if;
+    if char_length(v_item) < 2 then return jsonb_build_object('status', 'invalid', 'message', 'Which item?'); end if;
+
+    if p_kind = 'remove_from_menu' then
+      v_res := owner_resolve_menu_slot(v_item, v_var, v_date);
+      if v_res->>'status' <> 'ok' then return v_res; end if;
+      v_summary := 'Remove ' || (v_res->>'item') || ' (' || (v_res->>'label') || ') from ' || v_label || '''s menu'
+                   || ' (' || (v_res->>'slots_left') || ' portions left will no longer be offered). Orders already placed are not affected. This needs your PIN.';
+      insert into owner_pending_actions (actor, kind, params, summary, needs_pin)
+      values (p_actor, 'remove_from_menu',
+              jsonb_build_object('date', v_date, 'slot_id', v_res->>'slot_id', 'item', v_res->>'item',
+                                 'label', v_res->>'label', 'slots_left', (v_res->>'slots_left')::int),
+              v_summary, true)
+      returning id into v_id;
+      return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary, 'needs_pin', true);
+    end if;
+
+    -- add_to_menu: an existing (active) menu item goes onto that day's menu
+    begin
+      v_portions := (p_params->>'portions')::integer;
+    exception when others then
+      v_portions := null;
+    end;
+    if v_portions is null or v_portions < 1 or v_portions > 500 then
+      return jsonb_build_object('status', 'invalid', 'message', 'How many portions? Give a whole number from 1 to 500.');
+    end if;
+    select array_agg(distinct mi.name order by mi.name) into v_names
+      from menu_items mi where mi.active and owner_name_match(mi.name, v_item);
+    if v_names is null then
+      return jsonb_build_object('status', 'not_found', 'message',
+        '"' || v_item || '" is not in your menu items. Add it under Menu Items in the dashboard first.');
+    end if;
+    if array_length(v_names, 1) > 1 then
+      select n into v_name from unnest(v_names) n where lower(n) = lower(v_item) limit 1;
+      if v_name is null then return jsonb_build_object('status', 'ambiguous', 'options', to_jsonb(v_names)); end if;
+    else
+      v_name := v_names[1];
+    end if;
+    select count(*) into v_total_sizes
+      from menu_items mi join menu_item_variations v on v.menu_item_id = mi.id
+     where mi.active and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%');
+    if v_total_sizes = 0 then
+      return jsonb_build_object('status', 'not_found', 'message', 'No size matching "' || v_var || '" for ' || v_name || '.');
+    end if;
+    if v_total_sizes > 1 then
+      return jsonb_build_object('status', 'ambiguous_size', 'item', v_name, 'options',
+        (select jsonb_agg(v.label || ' (₦' || to_char(v.price, 'FM999,999,999') || ')' order by v.sort_order, v.label)
+           from menu_items mi join menu_item_variations v on v.menu_item_id = mi.id
+          where mi.active and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%')));
+    end if;
+    select mi.id as menu_item_id, v.id as variation_id, mi.name as item, v.label, v.price
+      into v_row
+      from menu_items mi join menu_item_variations v on v.menu_item_id = mi.id
+     where mi.active and mi.name = v_name and (v_var is null or v.label ilike '%' || v_var || '%');
+    if exists (select 1 from daily_menu_slots s join daily_menus d on d.id = s.daily_menu_id
+                where d.menu_date = v_date and s.variation_id = v_row.variation_id) then
+      return jsonb_build_object('status', 'no_change', 'message',
+        v_row.item || ' (' || v_row.label || ') is already on ' || v_label || '''s menu. To change its portions, say for example "set it to 5 portions".');
+    end if;
+    v_ok := exists (select 1 from daily_menus where menu_date = v_date);
+    if v_dry then
+      return jsonb_build_object('status', 'dry_ok', 'no_menu', not v_ok,
+        'add', jsonb_build_object('menu_item_id', v_row.menu_item_id, 'variation_id', v_row.variation_id,
+                                  'item', v_row.item, 'label', v_row.label, 'price', v_row.price, 'portions', v_portions));
+    end if;
+    v_summary := 'Add ' || v_row.item || ' (' || v_row.label || ', ₦' || to_char(v_row.price, 'FM999,999,999') || ') to '
+                 || v_label || '''s menu with ' || v_portions || ' portions.'
+                 || case when v_ok then '' else ' There is no menu for ' || v_label || ' yet, so one will be created and published (customers will see it).' end;
+    insert into owner_pending_actions (actor, kind, params, summary)
+    values (p_actor, 'add_to_menu',
+            jsonb_build_object('date', v_date, 'adds', jsonb_build_array(jsonb_build_object(
+                'menu_item_id', v_row.menu_item_id, 'variation_id', v_row.variation_id,
+                'item', v_row.item, 'label', v_row.label, 'price', v_row.price, 'portions', v_portions))),
+            v_summary)
+    returning id into v_id;
+    return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary, 'needs_pin', false);
+
+  elsif p_kind = 'undo_last' then
+    select * into v_log from admin_log
+     where action in ('owner_action.set_price', 'owner_action.set_prices', 'owner_action.set_sold_out',
+                      'owner_action.set_available', 'owner_action.set_portions')
+     order by id desc limit 1;
+    if v_log.id is null then
+      return jsonb_build_object('status', 'no_change', 'message', 'There is no price or portions change to undo.');
+    end if;
+
+    if v_log.action in ('owner_action.set_price', 'owner_action.set_prices') then
+      v_changes := '[]'::jsonb;
+      v_ok := true;
+      for v_ch in select * from jsonb_array_elements(v_log.before_value->'prices') loop
+        select price into v_newp from menu_item_variations where id = (v_ch->>'variation_id')::uuid;
+        -- only undo if nobody has changed that price again since
+        if v_newp is null or v_newp <> (
+             select (a->>'price')::int from jsonb_array_elements(v_log.after_value->'prices') a
+              where a->>'variation_id' = v_ch->>'variation_id' limit 1) then
+          v_ok := false;
+        end if;
+        v_changes := v_changes || jsonb_build_array(jsonb_build_object(
+          'variation_id', v_ch->>'variation_id', 'item', v_ch->>'item', 'label', v_ch->>'label',
+          'old_price', v_newp, 'new_price', (v_ch->>'price')::int));
+      end loop;
+      if not v_ok then
+        return jsonb_build_object('status', 'no_change', 'message',
+          'Those prices have been changed again since, so I cannot undo that safely. Tell me the prices you want.');
+      end if;
+      v_count := jsonb_array_length(v_changes);
+      select v_count > 1 or bool_or(abs((e->>'new_price')::numeric - (e->>'old_price')::numeric) > 0.25 * (e->>'old_price')::numeric)
+        into v_pin from jsonb_array_elements(v_changes) e;
+      select 'Undo the last price change: '
+             || string_agg((e->>'item') || ' (' || (e->>'label') || ') ₦' || to_char((e->>'old_price')::int, 'FM999,999,999')
+                           || ' back to ₦' || to_char((e->>'new_price')::int, 'FM999,999,999'), '; ' order by ord)
+             || '.' || case when v_pin then ' This needs your PIN.' else '' end
+        into v_summary
+        from (select e, ord from jsonb_array_elements(v_changes) with ordinality as t(e, ord) where ord <= 8) x;
+      insert into owner_pending_actions (actor, kind, params, summary, needs_pin)
+      values (p_actor, case when v_count > 1 then 'set_prices' else 'set_price' end,
+              jsonb_build_object('changes', v_changes), v_summary, v_pin)
+      returning id into v_id;
+      return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary, 'needs_pin', v_pin);
+    else
+      v_slots := '[]'::jsonb;
+      v_ok := true;
+      for v_ch in select * from jsonb_array_elements(v_log.before_value->'slots') loop
+        select s.slots_left, s.slots_total into v_count, v_newp from daily_menu_slots s where s.id = (v_ch->>'slot_id')::uuid;
+        if v_count is null or v_count <> (
+             select (a->>'slots_left')::int from jsonb_array_elements(v_log.after_value->'slots') a
+              where a->>'slot_id' = v_ch->>'slot_id' limit 1) then
+          v_ok := false;
+        end if;
+        v_slots := v_slots || jsonb_build_array(jsonb_build_object(
+          'slot_id', v_ch->>'slot_id', 'item', v_ch->>'item', 'label', v_ch->>'label',
+          'from_left', v_count, 'from_total', v_newp, 'to_total', v_newp,
+          'to_left', least(coalesce(v_newp, 0), (v_ch->>'slots_left')::int)));
+      end loop;
+      if not v_ok then
+        return jsonb_build_object('status', 'no_change', 'message',
+          'Those portions have changed again since, so I cannot undo that safely. Tell me the number you want.');
+      end if;
+      select 'Undo the last portions change: '
+             || string_agg((e->>'item') || ' (' || (e->>'label') || ') back to ' || (e->>'to_left') || ' left', '; ')
+             || '.'
+        into v_summary from jsonb_array_elements(v_slots) e;
+      insert into owner_pending_actions (actor, kind, params, summary)
+      values (p_actor, 'set_portions', jsonb_build_object('slots', v_slots), v_summary)
+      returning id into v_id;
+      return jsonb_build_object('status', 'pending', 'action_id', v_id, 'summary', v_summary, 'needs_pin', false);
+    end if;
+  end if;
+
+  raise exception 'UNKNOWN_ACTION';
+end;
+$$;
+
+-- Runs the one stored proposal for this person, if it is still fresh.
+-- Risky proposals (needs_pin) run only with the right PIN.
+drop function if exists owner_confirm_action(text);
+create or replace function owner_confirm_action(p_actor text, p_pin text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_act owner_pending_actions;
+  v_slot jsonb;
+  v_ch jsonb;
+  v_before jsonb := '[]'::jsonb;
+  v_after jsonb := '[]'::jsonb;
+  v_order orders;
+  v_new_left int;
+  v_cur int;
+  v_bad int := 0;
+  v_check jsonb;
+  v_res jsonb;
+  v_dm uuid;
+  v_gone record;
+  v_mode text;
+begin
+  if auth.role() <> 'service_role' then raise exception 'NOT_ALLOWED'; end if;
+
+  select * into v_act from owner_pending_actions
+   where actor = p_actor and status = 'pending'
+   order by created_at desc limit 1 for update;
+  if v_act.id is null then return jsonb_build_object('status', 'none'); end if;
+
+  if v_act.expires_at < now() then
+    update owner_pending_actions set status = 'expired', resolved_at = now() where id = v_act.id;
+    return jsonb_build_object('status', 'expired');
+  end if;
+
+  -- A bare number is only ever treated as a PIN when the waiting action
+  -- really asks for one. It can never confirm an ordinary action.
+  if p_pin is not null and not v_act.needs_pin then
+    return jsonb_build_object('status', 'not_a_pin_request');
+  end if;
+  if v_act.needs_pin then
+    if p_pin is null then
+      return jsonb_build_object('status', 'pin_required', 'summary', v_act.summary);
+    end if;
+    v_check := owner_pin_check(p_pin);
+    if v_check->>'status' <> 'ok' then
+      return v_check;   -- wrong / locked / not_set: the proposal stays waiting
+    end if;
+  end if;
+
+  if v_act.kind in ('set_sold_out', 'set_available', 'set_portions') then
+    for v_slot in select * from jsonb_array_elements(v_act.params->'slots') loop
+      v_before := v_before || jsonb_build_array(jsonb_build_object(
+        'slot_id', v_slot->>'slot_id', 'item', v_slot->>'item', 'label', v_slot->>'label',
+        'slots_left', (select slots_left from daily_menu_slots where id = (v_slot->>'slot_id')::uuid)));
+      update daily_menu_slots
+         set slots_total = greatest(slots_total, coalesce((v_slot->>'to_total')::int, 0)),
+             slots_left = least(greatest(slots_total, coalesce((v_slot->>'to_total')::int, 0)), (v_slot->>'to_left')::int)
+       where id = (v_slot->>'slot_id')::uuid
+      returning slots_left into v_new_left;
+      v_after := v_after || jsonb_build_array(jsonb_build_object(
+        'slot_id', v_slot->>'slot_id', 'item', v_slot->>'item', 'label', v_slot->>'label', 'slots_left', v_new_left));
+    end loop;
+    insert into admin_log (actor, action, summary, before_value, after_value)
+    values (p_actor, 'owner_action.' || v_act.kind, v_act.summary,
+            jsonb_build_object('slots', v_before), jsonb_build_object('slots', v_after));
+
+  elsif v_act.kind in ('take_over_chat', 'hand_back_chat') then
+    select mode into v_mode from conversations where id = (v_act.params->>'conversation_id')::uuid for update;
+    if v_mode is null then
+      update owner_pending_actions set status = 'failed', resolved_at = now() where id = v_act.id;
+      return jsonb_build_object('status', 'failed', 'message', 'That chat no longer exists, so nothing was changed.');
+    end if;
+    if v_act.kind = 'take_over_chat' then
+      if v_mode = 'owner' then
+        update owner_pending_actions set status = 'failed', resolved_at = now() where id = v_act.id;
+        return jsonb_build_object('status', 'failed', 'message', 'You already have that chat, so nothing was changed.');
+      end if;
+      insert into chat_messages (conversation_id, role, content)
+      values ((v_act.params->>'conversation_id')::uuid, 'system', 'A member of our team has joined the chat.');
+      update conversations
+         set mode = 'owner', handoff_at = coalesce(handoff_at, now()), owner_unread = false,
+             handoff_reason = coalesce(handoff_reason, 'Taken over by the owner'),
+             updated_at = now(), last_message_at = now(),
+             last_preview = 'A member of our team has joined the chat.', last_role = 'system'
+       where id = (v_act.params->>'conversation_id')::uuid;
+    else
+      if v_mode = 'ai' then
+        update owner_pending_actions set status = 'failed', resolved_at = now() where id = v_act.id;
+        return jsonb_build_object('status', 'failed', 'message', 'That chat is already with the assistant, so nothing was changed.');
+      end if;
+      insert into chat_messages (conversation_id, role, content)
+      values ((v_act.params->>'conversation_id')::uuid, 'system', 'You are back with the Edelicacies assistant. Ask me anything.');
+      update conversations
+         set mode = 'ai', handoff_reason = null, handoff_at = null, owner_unread = false,
+             updated_at = now(), last_message_at = now(),
+             last_preview = 'You are back with the Edelicacies assistant.', last_role = 'system'
+       where id = (v_act.params->>'conversation_id')::uuid;
+    end if;
+    insert into admin_log (actor, action, summary, before_value, after_value)
+    values (p_actor, 'owner_action.' || v_act.kind, v_act.summary,
+            jsonb_build_object('chat', v_act.params->>'name', 'mode', v_mode),
+            jsonb_build_object('chat', v_act.params->>'name',
+                               'mode', case when v_act.kind = 'take_over_chat' then 'owner' else 'ai' end));
+
+  elsif v_act.kind = 'add_to_menu' then
+    -- Everything or nothing: if any item is already on the menu, change nothing.
+    insert into daily_menus (menu_date, published) values ((v_act.params->>'date')::date, true)
+      on conflict (menu_date) do nothing;
+    select id into v_dm from daily_menus where menu_date = (v_act.params->>'date')::date;
+    for v_ch in select * from jsonb_array_elements(v_act.params->'adds') loop
+      if exists (select 1 from daily_menu_slots where daily_menu_id = v_dm and variation_id = (v_ch->>'variation_id')::uuid) then
+        v_bad := v_bad + 1;
+      end if;
+    end loop;
+    if v_bad > 0 then
+      update owner_pending_actions set status = 'failed', resolved_at = now() where id = v_act.id;
+      return jsonb_build_object('status', 'failed', 'message', 'One of those items is already on the menu now, so nothing was changed. Please ask again.');
+    end if;
+    for v_ch in select * from jsonb_array_elements(v_act.params->'adds') loop
+      insert into daily_menu_slots (daily_menu_id, menu_item_id, variation_id, slots_total, slots_left, show_slots)
+      values (v_dm, (v_ch->>'menu_item_id')::uuid, (v_ch->>'variation_id')::uuid,
+              (v_ch->>'portions')::int, (v_ch->>'portions')::int, true);
+    end loop;
+    insert into admin_log (actor, action, summary, before_value, after_value)
+    values (p_actor, 'owner_action.add_to_menu', v_act.summary,
+            jsonb_build_object('on_menu', false),
+            jsonb_build_object('on_menu', true,
+                               'item', v_act.params->'adds'->0->>'item', 'label', v_act.params->'adds'->0->>'label',
+                               'portions', (v_act.params->'adds'->0->>'portions')::int,
+                               'items', v_act.params->'adds'));
+
+  elsif v_act.kind = 'remove_from_menu' then
+    delete from daily_menu_slots where id = (v_act.params->>'slot_id')::uuid
+    returning slots_left, slots_total into v_gone;
+    if v_gone.slots_left is null then
+      update owner_pending_actions set status = 'failed', resolved_at = now() where id = v_act.id;
+      return jsonb_build_object('status', 'failed', 'message', 'That item is no longer on the menu, so nothing was changed.');
+    end if;
+    insert into admin_log (actor, action, summary, before_value, after_value)
+    values (p_actor, 'owner_action.remove_from_menu', v_act.summary,
+            jsonb_build_object('on_menu', true, 'item', v_act.params->>'item', 'label', v_act.params->>'label',
+                               'slots_left', v_gone.slots_left, 'slots_total', v_gone.slots_total),
+            jsonb_build_object('on_menu', false));
+
+  elsif v_act.kind = 'add_order' then
+    -- Prices and portions must still be exactly what the owner was shown.
+    for v_ch in select * from jsonb_array_elements(v_act.params->'lines') loop
+      select price into v_cur from menu_item_variations where id = (v_ch->>'variation_id')::uuid;
+      if v_cur is null or v_cur <> (v_ch->>'unit_price')::int then v_bad := v_bad + 1; end if;
+    end loop;
+    select count(*) into v_new_left
+      from (select (e->>'slot_id')::uuid as slot_id, sum((e->>'quantity')::integer) as qty
+              from jsonb_array_elements(v_act.params->'lines') e group by 1) t
+      join daily_menu_slots s on s.id = t.slot_id
+     where t.qty > s.slots_left;
+    if v_bad > 0 or v_new_left > 0 then
+      update owner_pending_actions set status = 'failed', resolved_at = now() where id = v_act.id;
+      return jsonb_build_object('status', 'failed',
+        'message', 'A price or the portions left changed since you asked, so the order was not added. Please ask again.');
+    end if;
+    v_res := place_order(
+      (v_act.params->>'date')::date,
+      v_act.params->>'customer_name', v_act.params->>'phone', null,
+      case when v_act.params->>'delivery_type' = 'delivery' then 'dispatch' else 'pickup' end,
+      v_act.params->>'address', null, null, null,
+      case when v_act.params->>'delivery_type' = 'delivery' then (v_act.params->>'delivery_fee')::int else null end,
+      null,
+      concat_ws(' | ', 'Phone order added by owner',
+                case when (v_act.params->>'paid')::boolean then 'Paid' || coalesce(' by ' || (v_act.params->>'payment_method'), '') else 'Not yet paid' end,
+                v_act.params->>'note'),
+      (select jsonb_agg(jsonb_build_object('variation_id', e->>'variation_id', 'quantity', (e->>'quantity')::int))
+         from jsonb_array_elements(v_act.params->'lines') e));
+    update orders
+       set status = case when (v_act.params->>'paid')::boolean then 'paid' else 'awaiting_payment' end,
+           source = 'owner', auto_cancel_at = null
+     where id = (v_res->>'order_id')::uuid;
+    insert into admin_log (actor, action, summary, after_value)
+    values (p_actor, 'owner_action.add_order', v_act.summary,
+            jsonb_build_object('order_number', v_res->>'order_number', 'total', (v_res->>'total')::int,
+                               'paid', (v_act.params->>'paid')::boolean));
+    update owner_pending_actions set status = 'done', resolved_at = now() where id = v_act.id;
+    return jsonb_build_object('status', 'done', 'kind', 'add_order',
+                              'summary', 'Order ' || (v_res->>'order_number') || ' added. ' || v_act.summary,
+                              'order_number', v_res->>'order_number');
+
+  elsif v_act.kind in ('set_price', 'set_prices') then
+    -- If anyone changed a price since the proposal, change nothing at all.
+    for v_ch in select * from jsonb_array_elements(v_act.params->'changes') loop
+      select price into v_cur from menu_item_variations where id = (v_ch->>'variation_id')::uuid;
+      if v_cur is null or v_cur <> (v_ch->>'old_price')::int then v_bad := v_bad + 1; end if;
+    end loop;
+    if v_bad > 0 then
+      update owner_pending_actions set status = 'failed', resolved_at = now() where id = v_act.id;
+      return jsonb_build_object('status', 'failed',
+        'message', 'A price changed since you asked, so nothing was changed. Please ask again.');
+    end if;
+    for v_ch in select * from jsonb_array_elements(v_act.params->'changes') loop
+      update menu_item_variations set price = (v_ch->>'new_price')::int where id = (v_ch->>'variation_id')::uuid;
+      v_before := v_before || jsonb_build_array(jsonb_build_object(
+        'variation_id', v_ch->>'variation_id', 'item', v_ch->>'item', 'label', v_ch->>'label', 'price', (v_ch->>'old_price')::int));
+      v_after := v_after || jsonb_build_array(jsonb_build_object(
+        'variation_id', v_ch->>'variation_id', 'item', v_ch->>'item', 'label', v_ch->>'label', 'price', (v_ch->>'new_price')::int));
+    end loop;
+    insert into admin_log (actor, action, summary, before_value, after_value)
+    values (p_actor, 'owner_action.' || v_act.kind, v_act.summary,
+            jsonb_build_object('prices', v_before), jsonb_build_object('prices', v_after));
+
+  else
+    select * into v_order from orders where id = (v_act.params->>'order_id')::uuid for update;
+    if v_order.id is null or not (
+         v_order.status = 'pending_approval'
+         or (v_act.kind = 'reject_order' and v_order.source = 'owner' and v_order.status in ('awaiting_payment', 'paid', 'preparing'))
+       ) then
+      update owner_pending_actions set status = 'failed', resolved_at = now() where id = v_act.id;
+      return jsonb_build_object('status', 'failed',
+        'message', 'That order is no longer waiting for approval, so nothing was changed.');
+    end if;
+    if v_act.kind = 'approve_order' then
+      perform approve_order(v_order.id);
+    else
+      perform set_order_status(v_order.id, 'cancelled');
+    end if;
+    insert into admin_log (actor, action, summary, before_value, after_value)
+    values (p_actor, 'owner_action.' || v_act.kind, v_act.summary,
+            jsonb_build_object('order_number', v_order.order_number, 'status', v_order.status),
+            jsonb_build_object('order_number', v_order.order_number,
+                               'status', case when v_act.kind = 'approve_order' then 'awaiting_payment' else 'cancelled' end));
+  end if;
+
+  update owner_pending_actions set status = 'done', resolved_at = now() where id = v_act.id;
+  return jsonb_build_object('status', 'done', 'kind', v_act.kind, 'summary', v_act.summary,
+                            'order_id', v_act.params->>'order_id', 'order_number', v_act.params->>'order_number');
+end;
+$$;
+
+create or replace function owner_cancel_action(p_actor text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_n integer;
+begin
+  if auth.role() <> 'service_role' then raise exception 'NOT_ALLOWED'; end if;
+  update owner_pending_actions set status = 'cancelled', resolved_at = now()
+   where actor = p_actor and status = 'pending';
+  get diagnostics v_n = row_count;
+  return v_n > 0;
+end;
+$$;
+
+revoke all on function owner_propose_action(text, text, jsonb) from public, anon, authenticated;
+grant execute on function owner_propose_action(text, text, jsonb) to service_role;
+revoke all on function owner_confirm_action(text, text) from public, anon, authenticated;
+grant execute on function owner_confirm_action(text, text) to service_role;
+revoke all on function owner_cancel_action(text) from public, anon, authenticated;
+grant execute on function owner_cancel_action(text) to service_role;
+
+-- ============================================================================
+-- PHASE 7: OWNER ASSISTANT CHAT HISTORY (so a refresh never clears it)
+-- ============================================================================
+-- Each owner sees only their own conversation with the owner assistant.
+-- Customers have no access at all.
+
+create table if not exists owner_chat_messages (
+  id bigint generated always as identity primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  role text not null check (role in ('user', 'assistant')),
+  content text not null check (char_length(content) <= 4000),
+  created_at timestamptz not null default now()
+);
+create index if not exists owner_chat_messages_user_idx on owner_chat_messages(user_id, id);
+
+alter table owner_chat_messages enable row level security;
+drop policy if exists "owner_chat_messages own" on owner_chat_messages;
+create policy "owner_chat_messages own"
+  on owner_chat_messages for all to authenticated
+  using (is_owner() and user_id = auth.uid())
+  with check (is_owner() and user_id = auth.uid());
+
+-- ============================================================================
+-- PHASE 7 (step 6): THE OWNER ASSISTANT ON WHATSAPP
+-- ============================================================================
+-- Messages from a CONFIRMED owner number are routed (by the whatsapp Edge
+-- Function, in code, before any AI) to the owner assistant. This table keeps
+-- that short conversation so the assistant has context. Service key only.
+-- A message that looks like a PIN (4-6 digits) is saved masked, never as digits.
+
+create table if not exists owner_wa_messages (
+  id bigint generated always as identity primary key,
+  phone text not null,                       -- the owner's number, digits only
+  role text not null check (role in ('user', 'assistant')),
+  content text not null check (char_length(content) <= 2000),
+  wa_message_id text unique,                 -- Meta's id, so a repeat delivery is ignored
+  created_at timestamptz not null default now()
+);
+create index if not exists owner_wa_messages_phone_idx on owner_wa_messages(phone, id);
+alter table owner_wa_messages enable row level security;
+-- No policies: nobody but the service key can read or write this table.
+
+-- Tidy up: owner WhatsApp messages older than 30 days are removed each night.
+do $$
+begin
+  if exists (select 1 from cron.job where jobname = 'edelicacies-clean-owner-wa') then
+    perform cron.unschedule('edelicacies-clean-owner-wa');
+  end if;
+end $$;
+
+select cron.schedule(
+  'edelicacies-clean-owner-wa',
+  '0 3 * * *',
+  $$ delete from owner_wa_messages where created_at < now() - interval '30 days'; $$
+);

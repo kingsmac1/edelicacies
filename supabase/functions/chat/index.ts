@@ -888,6 +888,30 @@ type AssistantResult = {
   faqMatches: FaqMatch[]
 }
 
+// Some free models write a tool request as plain TEXT instead of using the
+// tool channel, e.g. <tool_call><function=send_enquiry><parameter=name>..</parameter>..
+// Read it back into a real tool call so a customer never sees the markup.
+// deno-lint-ignore no-explicit-any
+function toolCallsFromText(text: string): any[] {
+  // deno-lint-ignore no-explicit-any
+  const calls: any[] = []
+  for (const m of text.matchAll(/<function=([a-z_]+)>([\s\S]*?)<\/function>/gi)) {
+    // deno-lint-ignore no-explicit-any
+    const args: Record<string, any> = {}
+    for (const p of m[2].matchAll(/<parameter=([a-z_]+)>\s*([\s\S]*?)\s*<\/parameter>/gi)) {
+      const raw = p[2].trim()
+      try {
+        args[p[1]] = /^[\[{]/.test(raw) ? JSON.parse(raw) : raw
+      } catch {
+        args[p[1]] = raw
+      }
+    }
+    calls.push({ id: `text-call-${calls.length}`, type: 'function', function: { name: m[1], arguments: JSON.stringify(args) } })
+  }
+  return calls
+}
+const LEAKED_MARKUP_RE = /<\/?(tool_call|function|parameter)\b|<function=|<parameter=/i
+
 async function runAssistant(history: ChatMessage[], wa: WaInfo | null = null): Promise<AssistantResult | { error: string }> {
   const lastQuestion = history[history.length - 1].content
   // The notes search uses the last two things the customer said, so a
@@ -948,7 +972,14 @@ async function runAssistant(history: ChatMessage[], wa: WaInfo | null = null): P
     modelUsed = data.model ?? modelUsed
     usage = data.usage ?? usage
     const message = data?.choices?.[0]?.message
-    const calls = message?.tool_calls
+    let calls = message?.tool_calls
+    if ((!Array.isArray(calls) || calls.length === 0) && typeof message?.content === 'string' && LEAKED_MARKUP_RE.test(message.content)) {
+      const parsed = toolCallsFromText(message.content)
+      if (parsed.length > 0) {
+        calls = parsed
+        message.content = ''
+      }
+    }
 
     if (Array.isArray(calls) && calls.length > 0 && round < 2) {
       convo.push({ role: 'assistant', content: message.content ?? '', tool_calls: calls })
@@ -981,6 +1012,8 @@ async function runAssistant(history: ChatMessage[], wa: WaInfo | null = null): P
     }
 
     reply = String(message?.content ?? '').trim()
+    // Never show tool markup to a customer, whatever the model did.
+    if (LEAKED_MARKUP_RE.test(reply)) reply = ''
     break
   }
 

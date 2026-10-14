@@ -48,6 +48,15 @@ const OwnerAiMonitor = lazy(() =>
 const OwnerInbox = lazy(() =>
   import('./pages/dashboard/Inbox').then((m) => ({ default: m.OwnerInbox })),
 )
+const OwnerActivityLog = lazy(() =>
+  import('./pages/dashboard/ActivityLog').then((m) => ({ default: m.OwnerActivityLog })),
+)
+const OwnerAssistantPage = lazy(() =>
+  import('./pages/dashboard/OwnerAssistant').then((m) => ({ default: m.OwnerAssistantPage })),
+)
+const OwnerOwnerNumbers = lazy(() =>
+  import('./pages/dashboard/OwnerNumbers').then((m) => ({ default: m.OwnerOwnerNumbers })),
+)
 const OwnerWhatsApp = lazy(() =>
   import('./pages/dashboard/WhatsApp').then((m) => ({ default: m.OwnerWhatsApp })),
 )
@@ -149,6 +158,9 @@ function App() {
           <Route path="enquiries" element={<OwnerEnquiries />} />
           <Route path="messaging" element={<OwnerMessaging />} />
           <Route path="whatsapp" element={<OwnerWhatsApp />} />
+          <Route path="owner-numbers" element={<OwnerOwnerNumbers />} />
+          <Route path="assistant" element={<OwnerAssistantPage />} />
+          <Route path="activity" element={<OwnerActivityLog />} />
           <Route path="email-templates" element={<OwnerEmailTemplates />} />
           <Route path="settings" element={<OwnerSettings />} />
         </Route>

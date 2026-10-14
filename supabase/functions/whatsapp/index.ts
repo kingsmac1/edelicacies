@@ -11,7 +11,10 @@
 //     assistant stays quiet;
 //   - sends the owner's replies typed in the dashboard inbox;
 //   - sends "order approved / on its way / delivered" updates;
-//   - pings the owner's phone when a chat is handed off.
+//   - pings the owner's phone when a chat is handed off;
+//   - routes messages from a CONFIRMED owner number to the owner assistant
+//     (everyone else, including anyone who merely CLAIMS to be the owner, gets
+//     the customer assistant). The check is a database lookup in code.
 //
 // Until the secrets below exist, every call here quietly does nothing, so the
 // rest of the site works exactly as before.
@@ -52,7 +55,7 @@ async function cfg() {
   const { data } = await admin
     .from('whatsapp_config')
     .select(
-      'phone_number_id, owner_alert_number, template_order_confirmed, template_owner_alert, template_language, assistant_enabled',
+      'phone_number_id, owner_alert_number, template_order_confirmed, template_owner_alert, template_owner_code, template_language, assistant_enabled',
     )
     .eq('id', true)
     .maybeSingle()
@@ -66,6 +69,7 @@ async function cfg() {
     ownerAlert: pick(data?.owner_alert_number, 'OWNER_ALERT_WHATSAPP').replace(/\D/g, ''),
     tplOrder: pick(data?.template_order_confirmed, 'WA_TEMPLATE_ORDER_CONFIRMED', 'order_confirmed'),
     tplAlert: pick(data?.template_owner_alert, 'WA_TEMPLATE_OWNER_ALERT', 'owner_chat_alert'),
+    tplCode: pick(data?.template_owner_code, 'WA_TEMPLATE_OWNER_CODE', 'owner_verification'),
     lang: pick(data?.template_language, 'WA_TEMPLATE_LANG', 'en'),
     // Switch on Dashboard → WhatsApp. Off = messages reach the owner, not the assistant.
     assistantEnabled: data?.assistant_enabled !== false,
@@ -258,12 +262,96 @@ function describeMessage(m: WaMessage): { text: string; kind: string } | null {
   }
 }
 
+// Is this number an ACTIVE owner number? Decided by the database, never by
+// anything the sender writes.
+async function ownerNameFor(phone: string): Promise<string | null> {
+  const { data } = await admin.rpc('owner_name_for_phone', { p_phone: phone })
+  return typeof data === 'string' && data.trim() ? data : null
+}
+
+// A message of 4-6 digits could be the owner's PIN: never store it as digits.
+const looksLikePin = (t: string) => /^\d{4,6}$/.test(t.trim())
+
+// The owner is writing to the business number from a registered personal
+// number. Their message goes to the owner assistant, which has the admin
+// tools. The reply comes back here and is sent on WhatsApp.
+async function handleOwnerMessage(
+  m: WaMessage,
+  phone: string,
+  ownerName: string,
+  described: { text: string; kind: string },
+): Promise<void> {
+  await markRead(String(m.id))
+
+  if (described.kind !== 'text') {
+    await sendText(phone, 'I can only read typed text from you for now. Please type what you need.')
+    return
+  }
+  const text = described.text.trim().slice(0, 1000)
+
+  // Store the message (masked if it looks like a PIN). A repeat delivery from
+  // Meta hits the unique id and is ignored.
+  const { error: insertError } = await admin.from('owner_wa_messages').insert({
+    phone,
+    role: 'user',
+    content: looksLikePin(text) ? '••••' : text,
+    wa_message_id: String(m.id),
+  })
+  if (insertError) {
+    if ((insertError as { code?: string }).code === '23505') return
+    console.error('could not save owner message', insertError)
+  }
+
+  const { data: rows } = await admin
+    .from('owner_wa_messages')
+    .select('role, content')
+    .eq('phone', phone)
+    .order('id', { ascending: false })
+    .limit(12)
+  const history = ((rows ?? []) as { role: 'user' | 'assistant'; content: string }[])
+    .reverse()
+    .map((r) => ({ role: r.role, content: r.content }))
+  // The assistant must see what was really typed this time (a PIN, a YES...).
+  if (history.length > 0 && history[history.length - 1].role === 'user') history[history.length - 1].content = text
+
+  let reply = ''
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/owner-assistant`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor: `whatsapp: ${phone} (${ownerName})`, messages: history }),
+    })
+    const data = await res.json().catch(() => null)
+    reply = res.ok && typeof data?.reply === 'string' ? data.reply : ''
+    if (!res.ok) console.error('owner-assistant failed', res.status, JSON.stringify(data))
+  } catch (err) {
+    console.error('owner-assistant unreachable', err)
+  }
+  if (!reply) reply = 'Sorry, I could not process that just now. Please try again in a moment.'
+
+  // A PIN typed in a chat stays visible there: remind the owner once it is used.
+  if (looksLikePin(text) && /^Done\./.test(reply)) {
+    reply += '\n\nTip: delete your PIN message from this chat so nobody who sees your phone can read it.'
+  }
+
+  await admin.from('owner_wa_messages').insert({ phone, role: 'assistant', content: reply.slice(0, 2000) })
+  const sent = await sendText(phone, reply)
+  if (!sent.ok) console.error('could not send the owner assistant reply', sent.error)
+}
+
 async function handleIncomingMessage(m: WaMessage, contacts: WaMessage[]): Promise<void> {
   const phone = digits(m.from)
   if (!phone) return
   const described = describeMessage(m)
   if (!described || !described.text.trim()) return
   const name = contacts.find((c) => digits(c.wa_id) === phone)?.profile?.name ?? null
+
+  // Owner or not is decided HERE, in code, before any AI sees the message.
+  const ownerName = await ownerNameFor(phone)
+  if (ownerName) {
+    await handleOwnerMessage(m, phone, ownerName, described)
+    return
+  }
 
   const settings = await cfg()
   // Paused: still tell the customer it was read, but leave the answer to people.
@@ -538,6 +626,58 @@ async function ownerReply(conversationId: string, content: string): Promise<Resp
   return json({ ok: true })
 }
 
+// Sends a 6-digit code to a phone number the owner just added to Owner
+// numbers. Only a hash is stored. The number becomes active when the owner
+// types the code into the dashboard (confirm_owner_number).
+async function sendOwnerCode(ownerNumberId: string): Promise<Response> {
+  const { data: row } = await admin
+    .from('owner_numbers')
+    .select('id, name, phone, status')
+    .eq('id', ownerNumberId)
+    .maybeSingle()
+  if (!row) return json({ error: 'NOT_FOUND' }, 404)
+  if (row.status === 'active') return json({ error: 'ALREADY_ACTIVE' }, 409)
+
+  // One code a minute per number.
+  const { data: existing } = await admin
+    .from('owner_number_codes')
+    .select('sent_at')
+    .eq('owner_number_id', row.id)
+    .maybeSingle()
+  if (existing?.sent_at && Date.now() - new Date(existing.sent_at).getTime() < 60_000) {
+    return json({ error: 'WAIT', message: 'A code was just sent. Please wait a minute before asking again.' }, 429)
+  }
+
+  const c = await cfg()
+  if (!c.token || !c.phoneId) {
+    return json({ error: 'NOT_CONFIGURED', message: 'WhatsApp is not connected yet, so a code cannot be sent. The number stays pending until it is.' }, 502)
+  }
+
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0')
+  const hashBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(row.id + code))
+  const codeHash = [...new Uint8Array(hashBytes)].map((b) => b.toString(16).padStart(2, '0')).join('')
+
+  const sent = await sendTemplate(row.phone, c.tplCode, [code])
+  const result = sent.ok
+    ? sent
+    : await sendText(row.phone, `Your Edelicacies verification code is ${code}. It expires in 10 minutes.`)
+  if (!result.ok) {
+    return json({ error: 'SEND_FAILED', message: `WhatsApp refused the message: ${result.error}` }, 502)
+  }
+
+  await admin.from('owner_number_codes').upsert(
+    {
+      owner_number_id: row.id,
+      code_hash: codeHash,
+      expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+      attempts: 0,
+      sent_at: new Date().toISOString(),
+    },
+    { onConflict: 'owner_number_id' },
+  )
+  return json({ ok: true })
+}
+
 // ---------------------------------------------------------------------------
 // The front door
 // ---------------------------------------------------------------------------
@@ -607,8 +747,11 @@ Deno.serve(async (req) => {
       return json(await orderUpdate(String(body.orderId ?? ''), String(body.event ?? '')))
     }
 
-    if (body.action === 'owner_reply' || body.action === 'status') {
+    if (body.action === 'owner_reply' || body.action === 'status' || body.action === 'send_owner_code') {
       if (!(await isOwnerCaller(authHeader))) return json({ error: 'Owner login required' }, 401)
+      if (body.action === 'send_owner_code') {
+        return await sendOwnerCode(String(body.ownerNumberId ?? ''))
+      }
       if (body.action === 'owner_reply') {
         return await ownerReply(String(body.conversationId ?? ''), String(body.content ?? ''))
       }

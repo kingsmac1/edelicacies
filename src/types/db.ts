@@ -134,7 +134,7 @@ export interface OrderRow {
   discount_amount: number
   total: number
   status: OrderStatus
-  source: 'website' | 'chat'
+  source: 'website' | 'chat' | 'owner'
   note: string | null
   created_at: string
   updated_at: string

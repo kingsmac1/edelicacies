@@ -161,6 +161,11 @@ export function OwnerOrders() {
                   <div className="min-w-0">
                     <p className="truncate text-[15px] font-semibold text-ink-800">
                       {order.order_number} · {order.customer_name}
+                      {order.source === 'owner' && (
+                        <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 align-middle text-[11px] font-semibold text-amber-800">
+                          Added by owner
+                        </span>
+                      )}
                       {order.source === 'chat' && (
                         <span className="ml-2 rounded-full bg-sky-50 px-2 py-0.5 align-middle text-[11px] font-semibold text-sky-700">
                           Chat order

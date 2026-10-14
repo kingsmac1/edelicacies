@@ -18,6 +18,8 @@ interface RowState {
   slotsTotal: number
   showSlots: boolean
   slotId: string | null
+  /** Portions still available right now (null until the slot exists). */
+  slotsLeft: number | null
 }
 
 export function OwnerDailyMenu() {
@@ -60,8 +62,9 @@ export function OwnerDailyMenu() {
                 slotsTotal: existing.slots_total,
                 showSlots: existing.show_slots,
                 slotId: existing.id,
+                slotsLeft: existing.slots_left,
               }
-            : { included: false, slotsTotal: 10, showSlots: true, slotId: null }
+            : { included: false, slotsTotal: 10, showSlots: true, slotId: null, slotsLeft: null }
         }
       }
       setRows(nextRows)
@@ -283,8 +286,18 @@ export function OwnerDailyMenu() {
                                 disabled={!row.included}
                                 onChange={(e) => updateRow(v.id, { slotsTotal: Number(e.target.value) })}
                                 className="min-h-9 w-20 rounded-lg border border-ink-100 px-2 text-[13px] disabled:opacity-40"
-                                aria-label={`Slots for ${v.label}`}
+                                aria-label={`Total slots for ${v.label}`}
+                                title="Total portions for the day"
                               />
+                              {row.included && typeof row.slotsLeft === 'number' && (
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
+                                    row.slotsLeft <= 0 ? 'bg-brand-50 text-brand-700' : 'bg-emerald-50 text-emerald-700'
+                                  }`}
+                                >
+                                  {row.slotsLeft <= 0 ? 'Sold out' : `${row.slotsLeft} left`}
+                                </span>
+                              )}
                               <label className="flex items-center gap-1.5 text-[12px] text-ink-500">
                                 <input
                                   type="checkbox"

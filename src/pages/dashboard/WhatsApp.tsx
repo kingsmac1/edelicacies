@@ -13,6 +13,7 @@ interface WhatsAppConfig {
   owner_alert_number: string
   template_order_confirmed: string
   template_owner_alert: string
+  template_owner_code: string
   template_language: string
 }
 
@@ -21,6 +22,7 @@ const EMPTY_CONFIG: WhatsAppConfig = {
   owner_alert_number: '',
   template_order_confirmed: 'order_confirmed',
   template_owner_alert: 'owner_chat_alert',
+  template_owner_code: 'owner_verification',
   template_language: 'en',
 }
 
@@ -80,7 +82,7 @@ export function OwnerWhatsApp() {
     const { data } = await supabase
       .from('whatsapp_config')
       .select(
-        'phone_number_id, owner_alert_number, template_order_confirmed, template_owner_alert, template_language, assistant_enabled',
+        'phone_number_id, owner_alert_number, template_order_confirmed, template_owner_alert, template_owner_code, template_language, assistant_enabled',
       )
       .eq('id', true)
       .maybeSingle()
@@ -91,6 +93,7 @@ export function OwnerWhatsApp() {
         owner_alert_number: data.owner_alert_number ?? '',
         template_order_confirmed: data.template_order_confirmed ?? 'order_confirmed',
         template_owner_alert: data.template_owner_alert ?? 'owner_chat_alert',
+        template_owner_code: data.template_owner_code ?? 'owner_verification',
         template_language: data.template_language ?? 'en',
       })
     }
@@ -129,6 +132,7 @@ export function OwnerWhatsApp() {
         owner_alert_number: clean(config.owner_alert_number).replace(/\D/g, '') || null,
         template_order_confirmed: clean(config.template_order_confirmed) || 'order_confirmed',
         template_owner_alert: clean(config.template_owner_alert) || 'owner_chat_alert',
+        template_owner_code: clean(config.template_owner_code) || 'owner_verification',
         template_language: clean(config.template_language) || 'en',
         updated_at: new Date().toISOString(),
       })
@@ -217,6 +221,14 @@ export function OwnerWhatsApp() {
               className={inputClass}
               value={config.template_owner_alert}
               onChange={(e) => setConfig({ ...config, template_owner_alert: e.target.value })}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[13px] font-medium text-ink-700">Verification-code template name</span>
+            <input
+              className={inputClass}
+              value={config.template_owner_code}
+              onChange={(e) => setConfig({ ...config, template_owner_code: e.target.value })}
             />
           </label>
           <label className="block">
@@ -310,7 +322,7 @@ export function OwnerWhatsApp() {
             <h2 className="text-[15px] font-semibold text-ink-800">3. Message templates (create in Meta, category Utility)</h2>
             <p className="mt-1 text-[13px] text-ink-500">
               WhatsApp only lets us send a message 24 hours after the customer last wrote if it uses an approved
-              template. Create these two in WhatsApp Manager → Message templates. Use the exact name, language{' '}
+              template. Create these three in WhatsApp Manager → Message templates. Use the exact name, language{' '}
               <strong>{config.template_language}</strong>, and the text shown.
             </p>
             <CopyBox label="Template name" value={config.template_order_confirmed} />
@@ -323,6 +335,11 @@ export function OwnerWhatsApp() {
               label="Body"
               value={'Edelicacies alert: {{1}}. Customer said: "{{2}}". Open your dashboard inbox to reply.'}
             />
+            <CopyBox label="Template name (category Authentication or Utility)" value={config.template_owner_code} />
+            <CopyBox
+              label="Body"
+              value="Your Edelicacies verification code is {{1}}. It expires in 10 minutes. Do not share it."
+            />
           </section>
 
           <section className="mt-4 rounded-2xl bg-white p-5 ring-1 ring-ink-100">
@@ -333,6 +350,12 @@ export function OwnerWhatsApp() {
               <li>Open the chat here and press Hand back to AI when you want the assistant to carry on.</li>
               <li>Photos and voice notes are passed to you, because the assistant reads text only.</li>
               <li>When you approve an order that began on WhatsApp, the customer is told in that chat.</li>
+              <li>
+                From a <strong>confirmed owner number</strong> (Owner Numbers page), messages to this number go to your
+                private owner assistant instead: sales, menu, prices, phone orders and taking over chats. Anyone else,
+                even someone claiming to be you, only ever gets the customer assistant.
+              </li>
+              <li>Risky changes ask for your PIN. Delete the PIN message from the chat afterwards.</li>
             </ul>
           </section>
         </>
