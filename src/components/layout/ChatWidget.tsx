@@ -1,5 +1,6 @@
-import { CartBubble } from './CartBubble'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from "react-router-dom";
+import { CartBubble } from "./CartBubble";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChatNotFoundError,
   clearStoredChat,
@@ -10,181 +11,222 @@ import {
   type ChatMessageOut,
   type ChatMode,
   type StoredChat,
-} from '../../lib/chat'
+} from "../../lib/chat";
 
-const POLL_MS = 5000
+const POLL_MS = 5000;
 
-const GREETING = "Hi! I'm the Edelicacies assistant. Ask me anything about our food."
+const GREETING =
+  "Hi! I'm the Edelicacies assistant. Ask me anything about our food.";
 
 // A message waiting for the server's answer gets a negative temporary id.
-type Shown = ChatMessageOut & { pending?: boolean }
+type Shown = ChatMessageOut & { pending?: boolean };
 
-export function ChatWidget() {
-  const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState<Shown[]>([])
-  const [mode, setMode] = useState<ChatMode>('ai')
-  const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [unseen, setUnseen] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const chatRef = useRef<StoredChat | null>(null)
-  const lastIdRef = useRef(0)
-  const tempId = useRef(0)
+// fullPage: the shareable /chat page. The chat fills the screen and the
+// floating bubbles are not drawn.
+export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
+  const [open, setOpen] = useState(fullPage);
+  const [messages, setMessages] = useState<Shown[]>([]);
+  const [mode, setMode] = useState<ChatMode>("ai");
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [unseen, setUnseen] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const chatRef = useRef<StoredChat | null>(null);
+  const lastIdRef = useRef(0);
+  const tempId = useRef(0);
 
   // Merge new server messages in, without ever showing one twice.
   const merge = useCallback((incoming: ChatMessageOut[]) => {
-    if (incoming.length === 0) return
+    if (incoming.length === 0) return;
     setMessages((prev) => {
-      const have = new Set(prev.filter((m) => !m.pending).map((m) => m.id))
-      const fresh = incoming.filter((m) => !have.has(m.id))
-      if (fresh.length === 0) return prev
+      const have = new Set(prev.filter((m) => !m.pending).map((m) => m.id));
+      const fresh = incoming.filter((m) => !have.has(m.id));
+      if (fresh.length === 0) return prev;
       // A server copy of the customer's own message replaces its pending bubble.
-      let next = prev
+      let next = prev;
       for (const m of fresh) {
-        if (m.role === 'user') {
-          const idx = next.findIndex((p) => p.pending && p.content === m.content)
-          if (idx >= 0) next = next.filter((_, i) => i !== idx)
+        if (m.role === "user") {
+          const idx = next.findIndex(
+            (p) => p.pending && p.content === m.content,
+          );
+          if (idx >= 0) next = next.filter((_, i) => i !== idx);
         }
       }
-      return [...next, ...fresh].sort((a, b) => (a.id < 0 || b.id < 0 ? 0 : a.id - b.id))
-    })
-    const maxId = Math.max(...incoming.map((m) => m.id))
-    if (maxId > lastIdRef.current) lastIdRef.current = maxId
-  }, [])
+      return [...next, ...fresh].sort((a, b) =>
+        a.id < 0 || b.id < 0 ? 0 : a.id - b.id,
+      );
+    });
+    const maxId = Math.max(...incoming.map((m) => m.id));
+    if (maxId > lastIdRef.current) lastIdRef.current = maxId;
+  }, []);
 
   const resetChat = useCallback(() => {
-    clearStoredChat()
-    chatRef.current = null
-    lastIdRef.current = 0
-    setMessages([])
-    setMode('ai')
-  }, [])
+    clearStoredChat();
+    chatRef.current = null;
+    lastIdRef.current = 0;
+    setMessages([]);
+    setMode("ai");
+  }, []);
 
   // Load a chat that was started earlier in this browser.
   useEffect(() => {
-    const stored = loadStoredChat()
-    if (!stored) return
-    chatRef.current = stored
+    const stored = loadStoredChat();
+    if (!stored) return;
+    chatRef.current = stored;
     pollChat(stored, 0)
       .then((r) => {
-        setMode(r.mode)
-        merge(r.messages)
+        setMode(r.mode);
+        merge(r.messages);
       })
       .catch((err) => {
-        if (err instanceof ChatNotFoundError) resetChat()
-      })
-  }, [merge, resetChat])
+        if (err instanceof ChatNotFoundError) resetChat();
+      });
+  }, [merge, resetChat]);
 
   // While the chat is open, quietly check for replies from the team.
   useEffect(() => {
-    if (!open) return
+    if (!open) return;
     const id = window.setInterval(() => {
-      const chat = chatRef.current
-      if (!chat || document.hidden) return
+      const chat = chatRef.current;
+      if (!chat || document.hidden) return;
       pollChat(chat, lastIdRef.current)
         .then((r) => {
-          setMode(r.mode)
-          merge(r.messages)
+          setMode(r.mode);
+          merge(r.messages);
         })
         .catch((err) => {
-          if (err instanceof ChatNotFoundError) resetChat()
-        })
-    }, POLL_MS)
-    return () => window.clearInterval(id)
-  }, [open, merge, resetChat])
+          if (err instanceof ChatNotFoundError) resetChat();
+        });
+    }, POLL_MS);
+    return () => window.clearInterval(id);
+  }, [open, merge, resetChat]);
 
   // A reply that arrives while the window is closed gets a dot on the bubble.
   useEffect(() => {
     if (open) {
-      setUnseen(false)
-      return
+      setUnseen(false);
+      return;
     }
     const id = window.setInterval(() => {
-      const chat = chatRef.current
-      if (!chat || document.hidden) return
+      const chat = chatRef.current;
+      if (!chat || document.hidden) return;
       pollChat(chat, lastIdRef.current)
         .then((r) => {
-          if (r.messages.some((m) => m.role === 'owner' || m.role === 'assistant')) {
-            setMode(r.mode)
-            merge(r.messages)
-            setUnseen(true)
+          if (
+            r.messages.some((m) => m.role === "owner" || m.role === "assistant")
+          ) {
+            setMode(r.mode);
+            merge(r.messages);
+            setUnseen(true);
           }
         })
-        .catch(() => undefined)
-    }, POLL_MS * 3)
-    return () => window.clearInterval(id)
-  }, [open, merge])
+        .catch(() => undefined);
+    }, POLL_MS * 3);
+    return () => window.clearInterval(id);
+  }, [open, merge]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, loading, open])
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading, open]);
 
   async function handleSend(e: React.FormEvent) {
-    e.preventDefault()
-    const text = input.trim()
-    if (!text || loading) return
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || loading) return;
 
-    tempId.current -= 1
+    tempId.current -= 1;
     setMessages((prev) => [
       ...prev,
-      { id: tempId.current, role: 'user', content: text, meta: null, created_at: new Date().toISOString(), pending: true },
-    ])
-    setInput('')
-    setError(null)
-    setLoading(true)
+      {
+        id: tempId.current,
+        role: "user",
+        content: text,
+        meta: null,
+        created_at: new Date().toISOString(),
+        pending: true,
+      },
+    ]);
+    setInput("");
+    setError(null);
+    setLoading(true);
 
     try {
-      const result = await sendChatMessage(text, chatRef.current)
+      const result = await sendChatMessage(text, chatRef.current);
       if (!chatRef.current && result.accessToken) {
-        const created = { conversationId: result.conversationId, accessToken: result.accessToken }
-        chatRef.current = created
-        saveStoredChat(created)
+        const created = {
+          conversationId: result.conversationId,
+          accessToken: result.accessToken,
+        };
+        chatRef.current = created;
+        saveStoredChat(created);
       }
-      setMode(result.mode)
-      merge(result.messages)
+      setMode(result.mode);
+      merge(result.messages);
     } catch (err) {
       if (err instanceof ChatNotFoundError) {
         // The saved chat is gone: start fresh next time.
-        resetChat()
-        setError('That chat has ended. Please send your message again.')
+        resetChat();
+        setError("That chat has ended. Please send your message again.");
       } else {
-        setError(err instanceof Error && err.message ? err.message : "Sorry, I couldn't reply just now. Please try again.")
+        setError(
+          err instanceof Error && err.message
+            ? err.message
+            : "Sorry, I couldn't reply just now. Please try again.",
+        );
       }
-      setMessages((prev) => prev.filter((m) => !m.pending))
-      setInput(text)
+      setMessages((prev) => prev.filter((m) => !m.pending));
+      setInput(text);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   return (
     <>
       {open && (
-        <div className="fixed bottom-24 right-4 z-50 flex h-[28rem] max-h-[calc(100vh-7rem)] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-black/25 ring-1 ring-black/10">
+        <div
+          className={
+            fullPage
+              ? "fixed inset-0 z-50 mx-auto flex h-[100dvh] w-full max-w-2xl flex-col overflow-hidden bg-white sm:inset-y-4 sm:h-auto sm:rounded-2xl sm:shadow-2xl sm:shadow-black/15 sm:ring-1 sm:ring-black/10"
+              : "fixed bottom-24 right-4 z-50 flex h-[28rem] max-h-[calc(100vh-7rem)] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-black/25 ring-1 ring-black/10"
+          }
+        >
           <div className="flex items-center justify-between bg-ink-900 px-4 py-3 text-white">
             <div>
               <p className="font-display text-base font-semibold">
-                {mode === 'owner' ? 'Edelicacies team' : 'Edelicacies assistant'}
+                {mode === "owner"
+                  ? "Edelicacies team"
+                  : "Edelicacies assistant"}
               </p>
               <p className="flex items-center gap-1.5 text-xs text-ink-200">
-                {mode === 'owner' ? (
+                {mode === "owner" ? (
                   <>
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" /> You're chatting with our team
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />{" "}
+                    You're chatting with our team
                   </>
                 ) : (
-                  'Ask about our food'
+                  "Ask about our food"
                 )}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              aria-label="Close chat"
-              className="flex h-9 w-9 items-center justify-center rounded-full text-xl hover:bg-white/10"
-            >
-              ×
-            </button>
+            {fullPage ? (
+              <Link
+                to="/"
+                className="rounded-full px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-white/10"
+              >
+                Visit site
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close chat"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-xl hover:bg-white/10"
+              >
+                ×
+              </button>
+            )}
           </div>
 
           <div className="flex-1 space-y-2 overflow-y-auto bg-cream-50 p-3">
@@ -195,36 +237,48 @@ export function ChatWidget() {
             </div>
 
             {messages.map((m) => {
-              if (m.role === 'system') {
+              if (m.role === "system") {
                 return (
-                  <p key={m.id} className="px-2 py-1 text-center text-[12px] italic text-ink-400">
+                  <p
+                    key={m.id}
+                    className="px-2 py-1 text-center text-[12px] italic text-ink-400"
+                  >
                     {m.content}
                   </p>
-                )
+                );
               }
-              const mine = m.role === 'user'
+              const mine = m.role === "user";
               return (
-                <div key={m.id} className={mine ? 'flex justify-end' : 'flex flex-col items-start gap-2'}>
-                  {m.role === 'owner' && (
+                <div
+                  key={m.id}
+                  className={
+                    mine
+                      ? "flex justify-end"
+                      : "flex flex-col items-start gap-2"
+                  }
+                >
+                  {m.role === "owner" && (
                     <span className="-mb-1 ml-1 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
                       Edelicacies team
                     </span>
                   )}
                   <p
                     className={
-                      'max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ' +
+                      "max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm " +
                       (mine
-                        ? 'bg-brand-500 text-white ' + (m.pending ? 'opacity-70' : '')
-                        : m.role === 'owner'
-                          ? 'bg-ink-900 text-white'
-                          : 'bg-white text-ink-800 ring-1 ring-ink-100')
+                        ? "bg-brand-500 text-white " +
+                          (m.pending ? "opacity-70" : "")
+                        : m.role === "owner"
+                          ? "bg-ink-900 text-white"
+                          : "bg-white text-ink-800 ring-1 ring-ink-100")
                     }
                   >
                     {m.content}
                   </p>
                   {m.meta?.orderNumber && (
                     <p className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">
-                      <span aria-hidden>✓</span> Order {m.meta.orderNumber} received, waiting for approval
+                      <span aria-hidden>✓</span> Order {m.meta.orderNumber}{" "}
+                      received, waiting for approval
                     </p>
                   )}
                   {m.meta?.enquirySaved && (
@@ -249,28 +303,40 @@ export function ChatWidget() {
                       rel="noopener noreferrer"
                       className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#25D366] px-4 text-[13px] font-semibold text-white shadow-sm active:scale-95"
                     >
-                      {m.meta.orderNumber ? 'Continue on WhatsApp for payment details' : 'Chat with the team on WhatsApp'}
+                      {m.meta.orderNumber
+                        ? "Continue on WhatsApp for payment details"
+                        : "Chat with the team on WhatsApp"}
                     </a>
                   )}
                 </div>
-              )
+              );
             })}
 
-            {loading && mode === 'ai' && (
+            {loading && mode === "ai" && (
               <div className="flex justify-start">
-                <p className="rounded-2xl bg-white px-3 py-2 text-sm text-ink-400 ring-1 ring-ink-100">Typing…</p>
+                <p className="rounded-2xl bg-white px-3 py-2 text-sm text-ink-400 ring-1 ring-ink-100">
+                  Typing…
+                </p>
               </div>
             )}
-            {mode === 'owner' && messages.length > 0 && messages[messages.length - 1].role === 'user' && !loading && (
-              <p className="px-2 text-center text-[12px] text-ink-400">
-                Our team has your message and will reply here shortly.
-              </p>
+            {mode === "owner" &&
+              messages.length > 0 &&
+              messages[messages.length - 1].role === "user" &&
+              !loading && (
+                <p className="px-2 text-center text-[12px] text-ink-400">
+                  Our team has your message and will reply here shortly.
+                </p>
+              )}
+            {error && (
+              <p className="text-center text-xs text-brand-700">{error}</p>
             )}
-            {error && <p className="text-center text-xs text-brand-700">{error}</p>}
             <div ref={bottomRef} />
           </div>
 
-          <form onSubmit={handleSend} className="flex gap-2 border-t border-ink-100 bg-white p-2">
+          <form
+            onSubmit={handleSend}
+            className="flex gap-2 border-t border-ink-100 bg-white p-2"
+          >
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -289,8 +355,8 @@ export function ChatWidget() {
         </div>
       )}
 
-      {!open && <CartBubble />}
-      {!open && (
+      {!open && !fullPage && <CartBubble />}
+      {!open && !fullPage && (
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -301,17 +367,27 @@ export function ChatWidget() {
           Prefer to chat?
         </button>
       )}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-label={open ? 'Close chat' : 'Open chat assistant'}
-        className="fixed bottom-5 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-brand-500 text-white shadow-lg shadow-black/20 active:scale-95"
-      >
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M4 3h16a2 2 0 012 2v11a2 2 0 01-2 2H8l-4.5 4a.5.5 0 01-.83-.37V5a2 2 0 011.33-2z" />
-        </svg>
-        {unseen && <span className="absolute right-0 top-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}
-      </button>
+      {!fullPage && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? "Close chat" : "Open chat assistant"}
+          className="fixed bottom-5 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-brand-500 text-white shadow-lg shadow-black/20 active:scale-95"
+        >
+          <svg
+            width="26"
+            height="26"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M4 3h16a2 2 0 012 2v11a2 2 0 01-2 2H8l-4.5 4a.5.5 0 01-.83-.37V5a2 2 0 011.33-2z" />
+          </svg>
+          {unseen && (
+            <span className="absolute right-0 top-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />
+          )}
+        </button>
+      )}
     </>
-  )
+  );
 }
