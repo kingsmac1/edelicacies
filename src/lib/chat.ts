@@ -7,7 +7,54 @@ export interface StoredChat {
   accessToken: string
 }
 
+export interface SavedDetails {
+  name: string
+  phone: string
+  email: string
+  delivery_type: 'delivery' | 'pickup'
+  address: string
+}
+
+const DETAILS_KEY = 'edelicacies.chat.details.v1'
+
+export function loadSavedDetails(): SavedDetails | null {
+  try {
+    const raw = localStorage.getItem(DETAILS_KEY)
+    if (!raw) return null
+    const d = JSON.parse(raw) as Partial<SavedDetails>
+    if (typeof d.name === 'string' && typeof d.phone === 'string') {
+      return {
+        name: d.name,
+        phone: d.phone,
+        email: d.email ?? '',
+        delivery_type: d.delivery_type === 'pickup' ? 'pickup' : 'delivery',
+        address: d.address ?? '',
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+export function storeSavedDetails(d: SavedDetails): void {
+  try {
+    localStorage.setItem(DETAILS_KEY, JSON.stringify(d))
+  } catch {
+    /* private mode: nothing is remembered */
+  }
+}
+
+export function forgetSavedDetails(): void {
+  try {
+    localStorage.removeItem(DETAILS_KEY)
+  } catch {
+    /* nothing to forget */
+  }
+}
+
 export interface ChatMeta {
+  orderDetails?: SavedDetails | null
   whatsappUrl?: string | null
   orderNumber?: string | null
   trackUrl?: string | null
@@ -92,10 +139,14 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
 export function sendChatMessage(message: string, chat: StoredChat | null): Promise<SendResult> {
   return invoke<SendResult>({
     message,
+    ...(loadSavedDetails() ? { savedDetails: loadSavedDetails() } : {}),
     ...(chat ? { conversationId: chat.conversationId, accessToken: chat.accessToken } : {}),
   })
 }
 
-export function pollChat(chat: StoredChat, after: number): Promise<{ mode: ChatMode; messages: ChatMessageOut[] }> {
+export function pollChat(
+  chat: StoredChat,
+  after: number,
+): Promise<{ mode: ChatMode; messages: ChatMessageOut[] }> {
   return invoke({ action: 'poll', conversationId: chat.conversationId, accessToken: chat.accessToken, after })
 }

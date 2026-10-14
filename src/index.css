@@ -176,3 +176,15 @@ button, a[role="button"], input, select, textarea {
 @media (prefers-reduced-motion: reduce) {
   .cart-bubble-ring { animation: none; opacity: 0.7; }
 }
+
+/* Slow drift on the chat header photo so the header feels alive, not static. */
+.chat-header-bg {
+  animation: chat-header-drift 18s ease-in-out infinite alternate;
+}
+@keyframes chat-header-drift {
+  from { transform: scale(1.05) translate(0, 0); }
+  to { transform: scale(1.18) translate(-2%, -2%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-header-bg { animation: none; }
+}

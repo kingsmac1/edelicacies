@@ -1,132 +1,114 @@
-import { Suspense, lazy } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
-import { PublicLayout } from "./components/layout/PublicLayout";
-import { ChatWidget } from "./components/layout/ChatWidget";
-import { Preloader } from "./components/layout/Preloader";
-import { Home } from "./pages/Home";
-import { Cart } from "./pages/Cart";
-import { Account } from "./pages/Account";
-import { NotFound } from "./pages/NotFound";
+import { Suspense, lazy } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { PublicLayout } from './components/layout/PublicLayout'
+import { ChatWidget } from './components/layout/ChatWidget'
+import { Preloader } from './components/layout/Preloader'
+import { Home } from './pages/Home'
+import { Cart } from './pages/Cart'
+import { Account } from './pages/Account'
+import { NotFound } from './pages/NotFound'
 
-const Checkout = lazy(() =>
-  import("./pages/Checkout").then((m) => ({ default: m.Checkout })),
-);
+const Checkout = lazy(() => import('./pages/Checkout').then((m) => ({ default: m.Checkout })))
 const OrderConfirmation = lazy(() =>
-  import("./pages/OrderConfirmation").then((m) => ({
+  import('./pages/OrderConfirmation').then((m) => ({
     default: m.OrderConfirmation,
   })),
-);
-const Track = lazy(() =>
-  import("./pages/Track").then((m) => ({ default: m.Track })),
-);
-const Review = lazy(() =>
-  import("./pages/Review").then((m) => ({ default: m.Review })),
-);
-const Unsubscribe = lazy(() =>
-  import("./pages/Unsubscribe").then((m) => ({ default: m.Unsubscribe })),
-);
+)
+const Track = lazy(() => import('./pages/Track').then((m) => ({ default: m.Track })))
+const Review = lazy(() => import('./pages/Review').then((m) => ({ default: m.Review })))
+const Unsubscribe = lazy(() => import('./pages/Unsubscribe').then((m) => ({ default: m.Unsubscribe })))
 
-const OwnerLogin = lazy(() =>
-  import("./pages/dashboard/Login").then((m) => ({ default: m.OwnerLogin })),
-);
+const OwnerLogin = lazy(() => import('./pages/dashboard/Login').then((m) => ({ default: m.OwnerLogin })))
 const OwnerLayout = lazy(() =>
-  import("./pages/dashboard/OwnerLayout").then((m) => ({
+  import('./pages/dashboard/OwnerLayout').then((m) => ({
     default: m.OwnerLayout,
   })),
-);
+)
 const OwnerMenuItems = lazy(() =>
-  import("./pages/dashboard/MenuItems").then((m) => ({
+  import('./pages/dashboard/MenuItems').then((m) => ({
     default: m.OwnerMenuItems,
   })),
-);
+)
 const OwnerDailyMenu = lazy(() =>
-  import("./pages/dashboard/DailyMenu").then((m) => ({
+  import('./pages/dashboard/DailyMenu').then((m) => ({
     default: m.OwnerDailyMenu,
   })),
-);
+)
 const OwnerSettings = lazy(() =>
-  import("./pages/dashboard/Settings").then((m) => ({
+  import('./pages/dashboard/Settings').then((m) => ({
     default: m.OwnerSettings,
   })),
-);
-const OwnerOrders = lazy(() =>
-  import("./pages/dashboard/Orders").then((m) => ({ default: m.OwnerOrders })),
-);
+)
+const OwnerOrders = lazy(() => import('./pages/dashboard/Orders').then((m) => ({ default: m.OwnerOrders })))
 const OwnerCustomers = lazy(() =>
-  import("./pages/dashboard/Customers").then((m) => ({
+  import('./pages/dashboard/Customers').then((m) => ({
     default: m.OwnerCustomers,
   })),
-);
+)
 const OwnerFinances = lazy(() =>
-  import("./pages/dashboard/Finances").then((m) => ({
+  import('./pages/dashboard/Finances').then((m) => ({
     default: m.OwnerFinances,
   })),
-);
+)
 const OwnerDiscountCodes = lazy(() =>
-  import("./pages/dashboard/DiscountCodes").then((m) => ({
+  import('./pages/dashboard/DiscountCodes').then((m) => ({
     default: m.OwnerDiscountCodes,
   })),
-);
+)
 const OwnerReviews = lazy(() =>
-  import("./pages/dashboard/Reviews").then((m) => ({
+  import('./pages/dashboard/Reviews').then((m) => ({
     default: m.OwnerReviews,
   })),
-);
+)
 const OwnerSubscribers = lazy(() =>
-  import("./pages/dashboard/Subscribers").then((m) => ({
+  import('./pages/dashboard/Subscribers').then((m) => ({
     default: m.OwnerSubscribers,
   })),
-);
+)
 const OwnerAiMonitor = lazy(() =>
-  import("./pages/dashboard/AiMonitor").then((m) => ({
+  import('./pages/dashboard/AiMonitor').then((m) => ({
     default: m.OwnerAiMonitor,
   })),
-);
-const OwnerInbox = lazy(() =>
-  import("./pages/dashboard/Inbox").then((m) => ({ default: m.OwnerInbox })),
-);
+)
+const OwnerInbox = lazy(() => import('./pages/dashboard/Inbox').then((m) => ({ default: m.OwnerInbox })))
 const OwnerActivityLog = lazy(() =>
-  import("./pages/dashboard/ActivityLog").then((m) => ({
+  import('./pages/dashboard/ActivityLog').then((m) => ({
     default: m.OwnerActivityLog,
   })),
-);
+)
 const OwnerAssistantPage = lazy(() =>
-  import("./pages/dashboard/OwnerAssistant").then((m) => ({
+  import('./pages/dashboard/OwnerAssistant').then((m) => ({
     default: m.OwnerAssistantPage,
   })),
-);
+)
 const OwnerOwnerNumbers = lazy(() =>
-  import("./pages/dashboard/OwnerNumbers").then((m) => ({
+  import('./pages/dashboard/OwnerNumbers').then((m) => ({
     default: m.OwnerOwnerNumbers,
   })),
-);
+)
 const OwnerWhatsApp = lazy(() =>
-  import("./pages/dashboard/WhatsApp").then((m) => ({
+  import('./pages/dashboard/WhatsApp').then((m) => ({
     default: m.OwnerWhatsApp,
   })),
-);
+)
 const OwnerEnquiries = lazy(() =>
-  import("./pages/dashboard/Enquiries").then((m) => ({
+  import('./pages/dashboard/Enquiries').then((m) => ({
     default: m.OwnerEnquiries,
   })),
-);
+)
 const OwnerMessaging = lazy(() =>
-  import("./pages/dashboard/Messaging").then((m) => ({
+  import('./pages/dashboard/Messaging').then((m) => ({
     default: m.OwnerMessaging,
   })),
-);
+)
 const OwnerEmailTemplates = lazy(() =>
-  import("./pages/dashboard/EmailTemplates").then((m) => ({
+  import('./pages/dashboard/EmailTemplates').then((m) => ({
     default: m.OwnerEmailTemplates,
   })),
-);
+)
 
 function OwnerFallback() {
-  return (
-    <div className="flex min-h-screen items-center justify-center text-ink-400">
-      Loading…
-    </div>
-  );
+  return <div className="flex min-h-screen items-center justify-center text-ink-400">Loading…</div>
 }
 
 function App() {
@@ -211,18 +193,9 @@ function App() {
           <Route path="menu-items" element={<OwnerMenuItems />} />
           <Route path="customers" element={<OwnerCustomers />} />
           <Route path="finances" element={<OwnerFinances />} />
-          <Route
-            path="records"
-            element={<Navigate to="/dashboard/finances?tab=sales" replace />}
-          />
-          <Route
-            path="expenses"
-            element={<Navigate to="/dashboard/finances?tab=expenses" replace />}
-          />
-          <Route
-            path="reports"
-            element={<Navigate to="/dashboard/finances" replace />}
-          />
+          <Route path="records" element={<Navigate to="/dashboard/finances?tab=sales" replace />} />
+          <Route path="expenses" element={<Navigate to="/dashboard/finances?tab=expenses" replace />} />
+          <Route path="reports" element={<Navigate to="/dashboard/finances" replace />} />
           <Route path="discount-codes" element={<OwnerDiscountCodes />} />
           <Route path="reviews" element={<OwnerReviews />} />
           <Route path="subscribers" element={<OwnerSubscribers />} />
@@ -241,7 +214,7 @@ function App() {
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>
-  );
+  )
 }
 
-export default App;
+export default App
