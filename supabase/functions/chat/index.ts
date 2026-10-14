@@ -1094,21 +1094,31 @@ async function runAssistant(history: ChatMessage[], wa: WaInfo | null = null, sa
   // Up to 3 rounds: the AI may ask for a tool, we run it, then it writes its
   // final answer. After the second round we stop offering tools.
   for (let round = 0; round < 3; round++) {
-    const aiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        models: MODELS,
-        temperature: TEMPERATURE,
-        messages: convo,
-        ...(round < 2 ? { tools: TOOLS, tool_choice: 'auto', provider: { require_parameters: true } } : {}),
-      }),
+    // Free models are often briefly rate-limited or overloaded: try once more
+    // after a short pause before telling the customer anything.
+    const requestBody = JSON.stringify({
+      models: MODELS,
+      temperature: TEMPERATURE,
+      messages: convo,
+      ...(round < 2 ? { tools: TOOLS, tool_choice: 'auto', provider: { require_parameters: true } } : {}),
     })
-
-    const data = await aiResponse.json()
+    let aiResponse: Response
+    let data: any // deno-lint-ignore no-explicit-any
+    for (let attempt = 0; ; attempt++) {
+      aiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+        body: requestBody,
+      })
+      data = await aiResponse.json().catch(() => ({}))
+      const retryable = aiResponse.status === 429 || aiResponse.status >= 500
+      if (aiResponse.ok || !retryable || attempt >= 1) break
+      console.error('OpenRouter transient error, retrying', aiResponse.status, JSON.stringify(data).slice(0, 300))
+      await new Promise((r) => setTimeout(r, 1500))
+    }
     if (!aiResponse.ok) {
-      console.error('OpenRouter error', aiResponse.status, JSON.stringify(data))
-      return { error: 'The assistant is busy right now. Please try again.' }
+      console.error('OpenRouter error', aiResponse.status, JSON.stringify(data).slice(0, 500))
+      return { error: 'The assistant is busy right now. Please try again in a moment.' }
     }
 
     modelUsed = data.model ?? modelUsed

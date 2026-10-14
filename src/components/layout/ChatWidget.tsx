@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import heroDish from '../../assets/menu/native-rice-turkey-snails.jpg'
 import logoWordmark from '../../assets/brand/logo-wordmark-white.png'
 import { MenuStrip } from './MenuStrip'
@@ -30,6 +30,7 @@ type Shown = ChatMessageOut & { pending?: boolean }
 // fullPage: the shareable /chat page. The chat fills the screen and the
 // floating bubbles are not drawn.
 export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
+  const navigate = useNavigate()
   const [open, setOpen] = useState(fullPage)
   const [messages, setMessages] = useState<Shown[]>([])
   const [mode, setMode] = useState<ChatMode>('ai')
@@ -425,7 +426,7 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
       {!open && !fullPage && (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => navigate('/chat')}
           tabIndex={-1}
           aria-hidden="true"
           className="fixed bottom-[26px] right-[76px] z-40 rounded-full bg-white px-3.5 py-2 text-[13px] font-semibold text-ink-800 shadow-lg shadow-black/15 ring-1 ring-black/5 active:scale-95"
@@ -436,8 +437,8 @@ export function ChatWidget({ fullPage = false }: { fullPage?: boolean }) {
       {!fullPage && (
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
-          aria-label={open ? 'Close chat' : 'Open chat assistant'}
+          onClick={() => navigate('/chat')}
+          aria-label="Open chat assistant"
           className="fixed bottom-5 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-brand-500 text-white shadow-lg shadow-black/20 active:scale-95"
         >
           <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
