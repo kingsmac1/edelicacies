@@ -118,6 +118,7 @@ PLACING AN ORDER
 - Only after a clear YES, call place_order. One order may only contain items from the same day's menu (today or tomorrow, not both).
 - Never place an order the customer has not confirmed, and never invent a name, phone number or address.
 - After success, tell the customer: their order number, that it is waiting for the team's approval, and that the team will send payment details on WhatsApp (a WhatsApp button appears under your message). A "Track my order" button also appears; if they gave an email, say the tracking link was sent there too. If they gave no email, mention they can still track with their order number and phone number. You must NOT say the order is paid or confirmed.
+- Once an order is placed it is completed and you cannot change it. If the customer then asks to change it (for example delivery instead of pickup), cancel it, or has a complaint, NEVER tell them to place another order. Say the order is completed, and that they should contact the team on WhatsApp or ask to be transferred to the team.
 - If the tool returns an error, explain it simply (for example, an item just sold out) and offer a fix.
 
 WHEN YOU CANNOT ANSWER
@@ -700,6 +701,17 @@ const HYPOTHETICAL_RE = /\b(what if|what happens (if|when)|in case|suppose|suppo
 const BIG_ORDER_RE =
   /\b(cater(ing)?|bulk|wedding|burial|funeral|party|corporate|conference|event|ceremony|\d{2,}\s*(people|persons|guests|plates|packs|portions|pieces|bottles)|hundred\s+(people|guests|plates))\b/i
 
+// After an order is placed, a customer asking to change or cancel it (for
+// example "make it delivery instead of pickup"). The assistant cannot edit a
+// placed order, so a person must; this is answered by code, not left to the AI.
+const CHANGE_ORDER_RE =
+  /\b(change|switch|swap|modify|edit|amend|cancel|update|correct)\b[^.?!]{0,40}\b(order|delivery|pick ?up|address|item|food|rice|soup|quantity|payment)\b|\b(delivery|pick ?up)\b[^.?!]{0,30}\binstead\b|\binstead\b[^.?!]{0,30}\b(delivery|pick ?up)\b|\b(wrong|incorrect) (address|order|item|number)\b|\b(add|remove)\b[^.?!]{0,30}\b(to|from) (my|the) order\b|\bchange (it|this|that) to\b/i
+
+const ORDER_CHANGE_TEXT =
+  "Your order has been placed and is with our team. I can't edit a placed order here. If you have a complaint or want to change anything (like delivery instead of pickup), please contact our team on WhatsApp, or tell me \"transfer me to the team\" and I'll hand this chat over to them."
+const ORDER_CHANGE_TEXT_WA =
+  "Your order has been placed and is with our team. I can't edit a placed order here. If you have a complaint or want to change anything (like delivery instead of pickup), tell me \"transfer me to the team\" and I'll hand this chat over to them right away."
+
 const HANDOFF_TEXT = {
   person:
     "Of course! I've asked a member of our team to take over this chat. They'll reply here shortly. You can also message us directly on WhatsApp.",
@@ -1170,7 +1182,7 @@ async function runAssistant(history: ChatMessage[], wa: WaInfo | null = null, sa
           }
         } else if (call?.function?.name === 'place_order') {
           if (orderNumber) {
-            result = `Error: order ${orderNumber} was already placed. Do not place another.`
+            result = `Error: order ${orderNumber} was already placed in this chat. Do not place another and do not suggest placing another order. Tell the customer the order is completed, and that for any complaint or change they should contact the team on WhatsApp or ask to be transferred to the team.`
           } else {
             const outcome = await runPlaceOrder(
               call.function.arguments ?? '{}',
@@ -1511,6 +1523,56 @@ async function handleSend(
     await handOffToOwner(conv, earlyReason.reason, text)
     conv.mode = 'owner'
     return respond({ reply, whatsappUrl: assistantMsg.meta?.whatsappUrl ?? null, handedOff: true })
+  }
+
+  // A change request about an order already placed in this chat: do not offer
+  // "place another order"; point to the team (WhatsApp button or transfer).
+  if (CHANGE_ORDER_RE.test(text)) {
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { data: placedOrders } = await admin
+      .from('orders')
+      .select('order_number, created_at')
+      .eq('conversation_id', conv.id)
+      .gte('created_at', dayAgo)
+      .order('created_at', { ascending: false })
+      .limit(1)
+    const placed = placedOrders?.[0]?.order_number as string | undefined
+    // A NEW order may be in progress in the same chat (items tapped, or the
+    // assistant is collecting name / delivery / address / email). Then the
+    // customer is correcting that new order, not the placed one.
+    let newOrderInProgress = false
+    if (placed) {
+      const { data: since } = await admin
+        .from('chat_messages')
+        .select('role, content')
+        .eq('conversation_id', conv.id)
+        .gt('created_at', placedOrders![0].created_at as string)
+        .order('id', { ascending: false })
+        .limit(12)
+      newOrderInProgress = (since ?? []).some(
+        (m) =>
+          (m.role === 'user' && /^I'd like to order:/i.test(m.content)) ||
+          (m.role === 'assistant' &&
+            /(name and (phone|number)|delivery or pickup|delivery address|email address|reply (with )?yes)/i.test(
+              m.content,
+            )),
+      )
+    }
+    if (placed && !newOrderInProgress) {
+      const reply = wa ? ORDER_CHANGE_TEXT_WA : ORDER_CHANGE_TEXT
+      const url = wa
+        ? null
+        : whatsappLink(`Hi Edelicacies, I'd like to change/ask about my order ${placed}: ${text.slice(0, 250)}`)
+      const msg = await addMessage(conv.id, 'assistant', reply, url ? { whatsappUrl: url } : null)
+      outMessages.push(msg)
+      await touchConversation(conv.id, {
+        last_message_at: msg.created_at,
+        last_preview: reply.slice(0, 140),
+        last_role: 'assistant',
+        owner_unread: true,
+      })
+      return respond({ reply, whatsappUrl: url })
+    }
   }
 
   // Daily allowance used up: be polite, point to WhatsApp, tell the owner once.
