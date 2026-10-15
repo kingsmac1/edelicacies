@@ -109,8 +109,9 @@ PLACING AN ORDER
   1. Their name and phone number together (one short message).
   2. After they reply: whether it is delivery or pickup.
   3. Only if they chose delivery: their delivery address. Skip this for pickup.
-  4. Then the optional email address, with one friendly sentence on why (the team can contact them and they get a link to track their order). Make clear it is optional. If they decline, carry on and never ask twice. A note for the team is also optional.
+  4. Then the optional email, as a clear separate question, for example: "Would you like to add your email address? It's optional. We'll send your order updates and tracking link there. Reply 'skip' if you'd rather not." If they decline or say skip, carry on and never ask twice. A note for the team is also optional.
   5. Then read the order back and ask for YES (see below).
+- While collecting these details, do not mention WhatsApp, buttons or contacting the team. Keep each message to the single question being asked.
 - If the customer already gave some of these details (or they are saved), do not ask for them again: skip to the first batch still missing. Never ask for several batches at once, and never repeat a question that was answered.
 - Then read the order back in a short list with each price and the total of the items, and say that any delivery fee will be confirmed by the team. Ask the customer to reply YES to place it.
 - Only after a clear YES, call place_order. One order may only contain items from the same day's menu (today or tomorrow, not both).
@@ -669,7 +670,7 @@ async function runPlaceOrder(rawArgs: string, catalog: Catalog): Promise<OrderOu
 // Replies that admit "I don't know", or customers asking for a person, get a
 // WhatsApp button with their question already typed in.
 const UNSURE_RE =
-  /(not sure|don'?t have|do not have|can'?t confirm|cannot confirm|unable to|team will|team can|message us|whatsapp)/i
+  /(not sure|don'?t have|do not have|can'?t confirm|cannot confirm|unable to)/i
 const WANTS_PERSON_RE = /\b(human|person|owner|admin|manager|agent|someone|speak to|talk to|call me)\b/i
 
 // A bot reply that clearly admits it does not know (stricter: used to count
@@ -1539,8 +1540,10 @@ async function handleSend(
   })
 
   let reply = result.reply
-  const wantsLink =
-    !result.enquirySaved && (UNSURE_RE.test(reply) || WANTS_PERSON_RE.test(text) || NOT_SURE_STRICT_RE.test(reply))
+  // The WhatsApp button appears ONLY after an order is placed (below) or when
+  // the assistant admits it cannot answer. Ordinary replies that merely
+  // mention "the team" must never trigger it.
+  const wantsLink = !result.enquirySaved && !result.orderNumber && NOT_SURE_STRICT_RE.test(reply)
   const whatsappUrl = wa
     ? null
     : result.orderNumber
@@ -1654,7 +1657,7 @@ async function handleLegacy(rawMessages: unknown): Promise<Response> {
   }
   await logUsage({ conversationId: null, model: result.modelUsed, usage: result.usage, latencyMs, ok: true })
   const lastQuestion = messages[messages.length - 1].content
-  const wantsLink = !result.enquirySaved && (UNSURE_RE.test(result.reply) || WANTS_PERSON_RE.test(lastQuestion))
+  const wantsLink = !result.enquirySaved && UNSURE_RE.test(result.reply)
   return json({
     reply: result.reply,
     model: result.modelUsed,
