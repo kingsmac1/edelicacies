@@ -77,9 +77,9 @@ export function MenuPicker({
           return (
             <div
               key={i.code}
-              className={`w-40 shrink-0 snap-start overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-ink-100 ${
-                i.soldOut ? 'opacity-60' : ''
-              }`}
+              className={`w-40 shrink-0 snap-start overflow-hidden rounded-2xl bg-white shadow-sm transition-shadow ${
+                qty > 0 ? 'ring-2 ring-brand-500' : 'ring-1 ring-ink-100'
+              } ${i.soldOut ? 'opacity-60' : ''}`}
             >
               <div className="relative flex h-24 w-full items-center justify-center overflow-hidden bg-ink-100">
                 {i.image ? (
@@ -152,7 +152,7 @@ export function MenuPicker({
             onClick={send}
             className="w-full rounded-full bg-brand-500 py-2.5 text-[13px] font-semibold text-white disabled:opacity-40"
           >
-            Send my order · {count} item{count === 1 ? '' : 's'} · ₦{total.toLocaleString('en-NG')}
+            Place my order · {count} item{count === 1 ? '' : 's'} · ₦{total.toLocaleString('en-NG')}
           </button>
         </div>
       )}
