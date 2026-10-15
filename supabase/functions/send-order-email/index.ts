@@ -81,7 +81,8 @@ function emailShell(bodyHtml: string): string {
   <body style="margin:0;background:#f5f5f5;font-family:-apple-system,Helvetica,Arial,sans-serif;">
     <div style="max-width:480px;margin:0 auto;padding:24px 16px;">
       <div style="text-align:center;margin-bottom:24px;">
-        <span style="font-size:24px;font-weight:700;color:#ff002c;">Edelicacies</span>
+        <img src="${(SITE_URL || 'https://edelicacies.com').replace(/\/+$/, '')}/email-logo.png" alt="" width="180" style="display:block;margin:0 auto;width:180px;max-width:70%;height:auto;border:0;" />
+        <div style="font-size:20px;font-weight:700;color:#ff002c;margin-top:6px;letter-spacing:0.2px;">Edelicacies</div>
       </div>
       <div style="background:#fff;border-radius:16px;padding:24px;color:#121216;line-height:1.5;">
         ${bodyHtml}
@@ -138,6 +139,26 @@ function itemsTable(items: EmailItem[], images: Record<string, string> = {}, sho
     })
     .join('')
   return `<table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0;">${rows}</table>`
+}
+
+// The money lines under the items, so every email adds up to the total:
+// items subtotal, discount, delivery fee (dispatch only), then the total.
+// deno-lint-ignore no-explicit-any
+function totalsBlock(order: any): string {
+  const fee = order.dispatch_fee_final ?? order.dispatch_fee_estimate ?? 0
+  const isDispatch = order.delivery_type === 'dispatch'
+  const row = (label: string, value: string, bold = false) =>
+    `<tr><td style="padding:3px 0;${bold ? 'font-weight:700;' : 'color:#6b6b75;'}">${label}</td><td style="padding:3px 0;text-align:right;${bold ? 'font-weight:700;' : ''}">${value}</td></tr>`
+  const rows: string[] = []
+  rows.push(row('Items', formatNaira(order.subtotal)))
+  if (order.discount_amount > 0) {
+    rows.push(row(`Discount${order.discount_code ? ` (${esc(order.discount_code)})` : ''}`, `-${formatNaira(order.discount_amount)}`))
+  }
+  if (isDispatch) {
+    rows.push(row('Delivery fee', fee > 0 ? formatNaira(fee) : 'To be confirmed by our team'))
+  }
+  rows.push(row('Total', formatNaira(order.total), true))
+  return `<table style="width:100%;border-collapse:collapse;margin:8px 0;">${rows.join('')}</table>`
 }
 
 function paragraphs(text: string): string {
@@ -231,9 +252,7 @@ Deno.serve(async (req) => {
         emailShell(`
           ${paragraphs(render(customerTmpl.body, customerVars))}
           ${itemsTable(items ?? [], images)}
-          <p style="font-weight:600;">Total: ${formatNaira(order.total)}${
-            isPending && order.delivery_type === 'dispatch' ? ' (delivery fee to be confirmed by our team)' : ''
-          }</p>
+          ${totalsBlock(order)}
           ${trackingLine}
         `),
       )
@@ -273,7 +292,7 @@ Deno.serve(async (req) => {
           emailShell(`
             ${paragraphs(render(ownerTmpl.body, ownerVars))}
             ${itemsTable(items ?? [], images)}
-            <p style="font-weight:600;">Total: ${formatNaira(order.total)}</p>
+            ${totalsBlock(order)}
             <p>${ownerVars.delivery_type}</p>
           `),
         )
@@ -296,7 +315,7 @@ Deno.serve(async (req) => {
         emailShell(`
           ${paragraphs(render(tmpl.body, vars))}
           ${itemsTable(items ?? [], images)}
-          <p style="font-weight:600;">Total: ${formatNaira(order.total)}</p>
+          ${totalsBlock(order)}
           ${trackingLine}
         `),
       )
@@ -333,7 +352,8 @@ Deno.serve(async (req) => {
         render(tmpl.subject, vars),
         emailShell(`
           ${paragraphs(render(tmpl.body, vars))}
-          ${itemsTable(items ?? [], images, false)}
+          ${itemsTable(items ?? [], images, order.status === 'paid')}
+          ${order.status === 'paid' ? totalsBlock(order) : ''}
           ${trackingLine}
         `),
       )

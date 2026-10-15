@@ -92,6 +92,17 @@ export function OwnerOrders() {
     setError(null)
     try {
       await approveOrder(order.id)
+      // A delivery fee typed before approving is saved now, so the approval
+      // email (and the total) already show the final amount.
+      const fee = order.delivery_type === 'dispatch' && feeDraft[order.id] ? Number(feeDraft[order.id]) : undefined
+      if (fee !== undefined && Number.isFinite(fee) && fee >= 0) {
+        await setOrderStatus(order.id, 'awaiting_payment', fee)
+        setFeeDraft((prev) => {
+          const next = { ...prev }
+          delete next[order.id]
+          return next
+        })
+      }
       void sendOrderEmail(order.id, 'order_approved')
       await load()
     } catch (err) {
@@ -195,6 +206,38 @@ export function OwnerOrders() {
                         </div>
                       ))}
                     </div>
+                    {(() => {
+                      const isDispatch = order.delivery_type === 'dispatch'
+                      const draft = feeDraft[order.id] ? Number(feeDraft[order.id]) : null
+                      const fee = draft ?? order.dispatch_fee_final ?? order.dispatch_fee_estimate ?? 0
+                      const total = isDispatch
+                        ? order.subtotal - order.discount_amount + fee
+                        : order.subtotal - order.discount_amount
+                      return (
+                        <div className="mt-2 flex flex-col gap-1 border-t border-ink-100 pt-2 text-[14px]">
+                          <div className="flex justify-between text-ink-500">
+                            <span>Items</span>
+                            <span>{formatNaira(order.subtotal)}</span>
+                          </div>
+                          {order.discount_amount > 0 && (
+                            <div className="flex justify-between text-ink-500">
+                              <span>Discount{order.discount_code ? ` (${order.discount_code})` : ''}</span>
+                              <span>-{formatNaira(order.discount_amount)}</span>
+                            </div>
+                          )}
+                          {isDispatch && (
+                            <div className="flex justify-between text-ink-500">
+                              <span>Delivery fee</span>
+                              <span>{fee > 0 ? formatNaira(fee) : 'Not set yet'}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between font-semibold text-ink-800">
+                            <span>{draft != null ? 'Total with this delivery fee' : 'Total'}</span>
+                            <span>{formatNaira(total)}</span>
+                          </div>
+                        </div>
+                      )
+                    })()}
                     {order.note && <p className="mt-2 text-[13px] italic text-ink-500">Note: {order.note}</p>}
                     {order.delivery_type === 'dispatch' && order.address_text && order.address_lat == null && (
                       <p className="mt-2 text-[13px] text-ink-500">Address: {order.address_text}</p>
@@ -222,6 +265,20 @@ export function OwnerOrders() {
 
                 {order.status === 'pending_approval' && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3">
+                    {order.delivery_type === 'dispatch' && (
+                      <label className="flex items-center gap-2 text-[13px] font-medium text-ink-600">
+                        Delivery fee (₦)
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          placeholder={`Delivery fee (est. ${formatNaira(order.dispatch_fee_estimate ?? 0)})`}
+                          value={feeDraft[order.id] ?? ''}
+                          onChange={(e) => setFeeDraft((prev) => ({ ...prev, [order.id]: e.target.value }))}
+                          className="min-h-9 w-48 rounded-lg border border-ink-100 px-2 text-[13px]"
+                        />
+                      </label>
+                    )}
                     <Button size="md" onClick={() => void handleApprove(order)} disabled={busyId === order.id}>
                       Approve order
                     </Button>
@@ -251,13 +308,18 @@ export function OwnerOrders() {
                 {order.status !== 'cancelled' && order.status !== 'delivered' && order.status !== 'pending_approval' && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3">
                     {order.status === 'awaiting_payment' && order.delivery_type === 'dispatch' && (
-                      <input
-                        type="number"
-                        placeholder={`Final fee (est. ${formatNaira(order.dispatch_fee_estimate ?? 0)})`}
-                        value={feeDraft[order.id] ?? ''}
-                        onChange={(e) => setFeeDraft((prev) => ({ ...prev, [order.id]: e.target.value }))}
-                        className="min-h-9 w-44 rounded-lg border border-ink-100 px-2 text-[13px]"
-                      />
+                      <label className="flex items-center gap-2 text-[13px] font-medium text-ink-600">
+                        Delivery fee (₦)
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          placeholder={`Delivery fee (${order.dispatch_fee_final != null ? 'saved' : 'est.'} ${formatNaira(order.dispatch_fee_final ?? order.dispatch_fee_estimate ?? 0)})`}
+                          value={feeDraft[order.id] ?? ''}
+                          onChange={(e) => setFeeDraft((prev) => ({ ...prev, [order.id]: e.target.value }))}
+                          className="min-h-9 w-48 rounded-lg border border-ink-100 px-2 text-[13px]"
+                        />
+                      </label>
                     )}
                     {next && (
                       <Button size="md" onClick={() => void handleAdvance(order)} disabled={busyId === order.id}>

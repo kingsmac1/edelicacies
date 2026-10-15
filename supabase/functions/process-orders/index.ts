@@ -101,7 +101,8 @@ function emailShell(bodyHtml: string): string {
   <body style="margin:0;background:#f5f5f5;font-family:-apple-system,Helvetica,Arial,sans-serif;">
     <div style="max-width:480px;margin:0 auto;padding:24px 16px;">
       <div style="text-align:center;margin-bottom:24px;">
-        <span style="font-size:24px;font-weight:700;color:#ff002c;">Edelicacies</span>
+        <img src="${(SITE_URL || 'https://edelicacies.com').replace(/\/+$/, '')}/email-logo.png" alt="" width="180" style="display:block;margin:0 auto;width:180px;max-width:70%;height:auto;border:0;" />
+        <div style="font-size:20px;font-weight:700;color:#ff002c;margin-top:6px;letter-spacing:0.2px;">Edelicacies</div>
       </div>
       <div style="background:#fff;border-radius:16px;padding:24px;color:#121216;line-height:1.5;">
         ${bodyHtml}
