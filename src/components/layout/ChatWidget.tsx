@@ -23,7 +23,7 @@ import {
 const POLL_MS = 5000
 
 const GREETING =
-  "Hi! I'm the Edelicacies assistant. Ask me anything about our food. To order or pre-order, select from the food above."
+  "Hi! I'm the Edelicacies assistant. Ask me anything about our food. To order or pre-order, select from the menu above."
 
 // A message waiting for the server's answer gets a negative temporary id.
 type Shown = ChatMessageOut & { pending?: boolean }
