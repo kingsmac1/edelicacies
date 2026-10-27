@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { PublicLayout } from './components/layout/PublicLayout'
 import { ChatWidget } from './components/layout/ChatWidget'
 import { Preloader } from './components/layout/Preloader'
+import CookieConsent from './components/CookieConsent'
 import { Home } from './pages/Home'
 import { Cart } from './pages/Cart'
 import { Account } from './pages/Account'
@@ -115,6 +116,7 @@ function App() {
   return (
     <>
       <Preloader />
+      <CookieConsent />
       <Routes>
         {/* Shareable link straight to the assistant (no site header or bubbles). */}
         <Route
